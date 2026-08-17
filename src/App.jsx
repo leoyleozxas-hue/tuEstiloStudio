@@ -32,11 +32,11 @@ export default function App() {
     setInitialWidgetTab('socios');
     document.getElementById('reserva')?.scrollIntoView({ behavior: 'smooth' });
   };
-
+//si se puede
   return (
     <div className="min-h-screen bg-[#0c0c0c] text-white font-sans selection:bg-[#d4af37] selection:text-black">
       <Preloader />
-      <Navbar 
+      <NavBar 
         onBookClick={() => scrollToBooking()} 
         onLoginClick={scrollToLogin} 
       />
