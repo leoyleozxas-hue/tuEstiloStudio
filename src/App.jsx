@@ -1,61 +1,19 @@
 // src/App.jsx
-import React, { useState } from 'react';
-import Preloader from './components/layout/Preloader';
-import NavBar from './components/layout/NavBar';
-import HeroSection from './components/sections/HeroSection';
-import MarqueeTicker from './components/sections/MarqueeTicker';
-import ServicesSection from './components/sections/ServicesSection';
-import ExperienceSection from './components/sections/ExperienceSection';
-import BenefitsSection from './components/sections/BenefitsSection';
-import TeamSection from './components/sections/TeamSection';
-import LocationSection from './components/sections/LocationSection';
-import BookingWidget from './components/booking/BookingWidget';
-import Footer from './components/layout/Footer';
-import FloatingCTA from './components/layout/FloatingCTA';
+import React from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import HomePage from './pages/HomePage';
+import AdminPage from './pages/AdminPage';
 
 export default function App() {
-  const [selectedServiceId, setSelectedServiceId] = useState(null);
-  const [selectedBarberId, setSelectedBarberId] = useState(null);
-  const [initialWidgetTab, setInitialWidgetTab] = useState('reserva');
-
-  //algo nuevo
-  // Función para ir a Reserva
-  const scrollToBooking = (srvId = null, barberId = null) => {
-    if (srvId) setSelectedServiceId(srvId);
-    if (barberId) setSelectedBarberId(barberId);
-    setInitialWidgetTab('reserva');
-    document.getElementById('reserva')?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  // Función para ir a Login de Socios
-  const scrollToLogin = () => {
-    setInitialWidgetTab('socios');
-    document.getElementById('reserva')?.scrollIntoView({ behavior: 'smooth' });
-  };
-//si se puede
   return (
-    <div className="min-h-screen bg-[#0c0c0c] text-white font-sans selection:bg-[#d4af37] selection:text-black">
-      <Preloader />
-      <NavBar 
-        onBookClick={() => scrollToBooking()} 
-        onLoginClick={scrollToLogin} 
-      />
-      <main>
-        <HeroSection onBookClick={() => scrollToBooking()} />
-        <MarqueeTicker />
-        <ServicesSection onSelectService={(id) => scrollToBooking(id)} />
-        <ExperienceSection />
-        <BenefitsSection onBookClick={() => scrollToBooking()} />
-        <TeamSection onSelectBarber={(barberId) => scrollToBooking(null, barberId)} />
-        <BookingWidget 
-          preselectedServiceId={selectedServiceId} 
-          preselectedBarberId={selectedBarberId}
-          forcedTab={initialWidgetTab}
-        />
-        <LocationSection />
-      </main>
-      <Footer />
-      <FloatingCTA onClick={() => scrollToBooking()} />
-    </div>
+    <BrowserRouter>
+      <Routes>
+        {/* Ruta pública: Landing Page */}
+        <Route path="/" element={<HomePage />} />
+        
+        {/* Ruta privada de administración */}
+        <Route path="/admin" element={<AdminPage />} />
+      </Routes>
+    </BrowserRouter>
   );
 }

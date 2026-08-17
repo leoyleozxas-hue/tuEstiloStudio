@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Scissors, User, Calendar, Clock, Phone, Sparkles, 
-  Send, CheckCircle2, ChevronRight, X, Check, MessageSquare,
+  Send, CheckCircle2, ChevronRight, ArrowLeft, Check, MessageSquare,
   Crown, Mail, Lock, Eye, EyeOff, LogIn, UserPlus, ArrowRight,
   Gift, Coffee, ShieldCheck, Tag, Zap, HeartHandshake, Loader2, AlertCircle, Users
 } from 'lucide-react';
@@ -55,12 +55,15 @@ const isValidUruguayPhone = (val) => {
   return /^09[1-9]\d{6}$/.test(digits);
 };
 
-export default function BookingWidget({ preselectedServiceId, preselectedBarberId, forcedTab }) {
+export default function BookingWidget({ preselectedServiceId, preselectedBarberId, forcedTab, forcedSocioMode }) {
   const daysList = getNextDays();
 
   // Pestañas principales ('reserva' | 'socios')
   const [mainTab, setMainTab] = useState(forcedTab || 'reserva');
-  const [socioMode, setSocioMode] = useState('registro'); // 'registro' | 'login'
+  const [socioMode, setSocioMode] = useState(forcedSocioMode || 'registro');
+
+  // Control de paso del formulario (1: Servicio, 2: Barbero, 3: Fecha/Hora, 4: Datos y Confirmación)
+  const [currentStep, setCurrentStep] = useState(1);
 
   // Estados de datos de Supabase
   const [services, setServices] = useState([]);
@@ -70,9 +73,9 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Estados de selección de Reserva
+  // Estados de selección
   const [serviceId, setServiceId] = useState('');
-  const [barberId, setBarberId] = useState('any');
+  const [barberId, setBarberId] = useState('any'); // 'any' = Cualquiera
   const [selectedDate, setSelectedDate] = useState(daysList[0]);
   const [activeTurno, setActiveTurno] = useState('tarde');
   const [selectedTime, setSelectedTime] = useState('');
@@ -83,19 +86,27 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
   const [bookingConfirmed, setBookingConfirmed] = useState(false);
   const [assignedBarber, setAssignedBarber] = useState(null);
 
-  // Estados de Club de Socios
+  // Estados de Socios
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
   const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [activeUser, setActiveUser] = useState(null);
-
   const [socioName, setSocioName] = useState('');
   const [socioPhone, setSocioPhone] = useState('');
   const [socioEmail, setSocioEmail] = useState('');
   const [socioPassword, setSocioPassword] = useState('');
   const [isVip, setIsVip] = useState(true);
   const [socioRegistered, setSocioRegistered] = useState(false);
+
+  // Sincronizar props externas
+  useEffect(() => {
+    if (forcedTab) setMainTab(forcedTab);
+  }, [forcedTab]);
+
+  useEffect(() => {
+    if (forcedSocioMode) setSocioMode(forcedSocioMode);
+  }, [forcedSocioMode]);
 
   // 1. Cargar Servicios y Barberos de Supabase
   useEffect(() => {
@@ -109,12 +120,15 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
 
         if (servicesRes.data && servicesRes.data.length > 0) {
           setServices(servicesRes.data);
-          setServiceId(preselectedServiceId || servicesRes.data[0].id);
+          const initialSrv = preselectedServiceId || servicesRes.data[0].id;
+          setServiceId(initialSrv);
+          if (preselectedServiceId) setCurrentStep(2);
         }
 
         if (barbersRes.data && barbersRes.data.length > 0) {
           setBarbers(barbersRes.data);
           setBarberId(preselectedBarberId || 'any');
+          if (preselectedBarberId) setCurrentStep(3);
         }
       } catch (err) {
         console.error('Error al cargar datos:', err);
@@ -125,7 +139,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
     fetchData();
   }, [preselectedServiceId, preselectedBarberId]);
 
-  // 2. Consultar citas de Supabase para calcular disponibilidad
+  // 2. Traer citas de Supabase para calcular disponibilidad
   const fetchBookings = useCallback(async () => {
     if (!selectedDate) return;
 
@@ -193,16 +207,6 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
     }
   });
 
-  useEffect(() => {
-    if (availableSlotsInTurno.length > 0) {
-      if (!selectedTime || !availableSlotsInTurno.includes(selectedTime)) {
-        setSelectedTime(availableSlotsInTurno[0]);
-      }
-    } else {
-      setSelectedTime('');
-    }
-  }, [activeTurno, serviceId, barberId, selectedDate, existingBookings]);
-
   const handlePhoneChange = (e) => {
     const formatted = formatUruguayPhone(e.target.value);
     setPhone(formatted);
@@ -237,6 +241,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
         targetBarber = barbers.find(b => isBarberFreeAt(b.id, startDateTime, endDateTime));
         if (!targetBarber) {
           alert('¡Ese horario acaba de ser ocupado! Por favor selecciona otro.');
+          setCurrentStep(3);
           fetchBookings();
           return;
         }
@@ -264,6 +269,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
       if (error) {
         if (error.message.includes('solapadas') || error.code === '23P01') {
           alert('¡Ese horario acaba de ser tomado! Por favor elige otro.');
+          setCurrentStep(3);
           fetchBookings();
         } else {
           alert(`Error al guardar: ${error.message}`);
@@ -340,11 +346,11 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
         </h2>
         <p className="text-xs text-gray-400 mt-1.5">
           {mainTab === 'reserva'
-            ? 'Seleccioná tu servicio y profesional en segundos con confirmación inmediata.'
+            ? 'Seleccioná tu servicio, profesional y horario paso a paso con confirmación inmediata.'
             : 'Unite a nuestro programa de beneficios y disfrutá de descuentos en cada visita.'}
         </p>
 
-        {/* Barra de Toggle Principal */}
+        {/* Toggle Principal */}
         <div className="flex bg-[#161616] p-1 rounded-2xl border border-[#262626] mt-5 max-w-xs sm:max-w-sm mx-auto shadow-lg">
           <button
             type="button"
@@ -377,13 +383,717 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
       {loadingData ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-400 gap-3">
           <Loader2 className="animate-spin text-[#d4af37]" size={32} />
-          <span className="text-sm">Cargando datos del sistema...</span>
+          <span className="text-sm">Cargando disponibilidad...</span>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 items-start">
           
-          {/* Columna Izquierda: Información dinámica según pestaña */}
-          <div className="lg:col-span-5 space-y-4">
+          {/* ========================================================================= */}
+          {/* COLUMNA FORMULARIO (order-1 en mobile, order-2 en desktop) */}
+          {/* ========================================================================= */}
+          <div className="order-1 lg:order-2 lg:col-span-7">
+            <div className="bg-[#121212] border border-[#222222] rounded-3xl p-5 sm:p-7 shadow-2xl relative min-h-[360px] flex flex-col justify-between">
+              
+              {/* TAB 1: RESERVA PASO A PASO COMPACTA */}
+              {mainTab === 'reserva' && (
+                <div className="w-full">
+                  {bookingConfirmed ? (
+                    <div className="text-center py-4 space-y-4 animate-fadeIn">
+                      <div className="w-14 h-14 bg-[#d4af37]/15 border border-[#d4af37] text-[#d4af37] rounded-full flex items-center justify-center mx-auto shadow-lg">
+                        <CheckCircle2 size={32} />
+                      </div>
+                      <div>
+                        <h3 className="text-xl sm:text-2xl font-serif font-bold text-white mb-1.5">
+                          ¡Turno Reservado con Éxito!
+                        </h3>
+                        <p className="text-xs text-gray-300 max-w-md mx-auto">
+                          Tu lugar ha quedado registrado. Te esperamos el <strong>{selectedDate.displayDay}</strong> a las <strong>{selectedTime} hs</strong> con <strong>{finalBarberName}</strong>.
+                        </p>
+                      </div>
+
+                      <div className="bg-[#181818] border border-[#282828] rounded-2xl p-4 text-xs text-left space-y-2 max-w-md mx-auto">
+                        <div className="flex justify-between text-gray-300">
+                          <span>Servicio:</span>
+                          <strong className="text-white">{currentService.nombre} ({durationMinutes} min)</strong>
+                        </div>
+                        <div className="flex justify-between text-gray-300">
+                          <span>Profesional:</span>
+                          <strong className="text-white">{finalBarberName}</strong>
+                        </div>
+                        <div className="flex justify-between text-gray-300">
+                          <span>Precio:</span>
+                          <strong className="text-[#d4af37]">${currentService.precio}</strong>
+                        </div>
+                        <div className="flex justify-between text-gray-300">
+                          <span>Cliente:</span>
+                          <strong className="text-white">{name} ({phone})</strong>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex flex-col sm:flex-row gap-2.5 justify-center">
+                        <a
+                          href={bookingWhatsappUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center justify-center gap-2 bg-[#25D366] text-white px-5 py-3 rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all shadow-lg"
+                        >
+                          <MessageSquare size={15} />
+                          <span>Avisar al Local por WhatsApp</span>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBookingConfirmed(false);
+                            setName('');
+                            setPhone('');
+                            setNotes('');
+                            setPhoneError('');
+                            setAssignedBarber(null);
+                            setCurrentStep(1);
+                            fetchBookings();
+                          }}
+                          className="px-5 py-3 rounded-xl text-xs font-bold text-gray-400 hover:text-white border border-[#2e2e2e] transition-colors"
+                        >
+                          Nueva Reserva
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      
+                      {/* ======================================================== */}
+                      {/* PASO 1: SELECCIONAR SERVICIO */}
+                      {/* ======================================================== */}
+                      {currentStep === 1 && (
+                        <div className="space-y-3 animate-fadeIn">
+                          <div className="flex justify-between items-center pb-2 border-b border-[#222222]">
+                            <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
+                              <Scissors size={15} className="text-[#d4af37]" />
+                              <span>1. Elegí el Servicio</span>
+                            </h3>
+                            <span className="text-[10px] text-gray-500 uppercase font-semibold">Paso 1 de 4</span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[260px] overflow-y-auto pr-1">
+                            {services.map((srv) => (
+                              <button
+                                key={srv.id}
+                                type="button"
+                                onClick={() => {
+                                  setServiceId(srv.id);
+                                  setCurrentStep(2); // Avanza fluidamente al paso 2
+                                }}
+                                className={`p-3 rounded-2xl border text-left flex items-center justify-between transition-all active:scale-[0.98] ${
+                                  serviceId === srv.id
+                                    ? 'bg-[#1e1b12] border-[#d4af37] text-white shadow-md'
+                                    : 'bg-[#171717] border-[#262626] text-gray-300 hover:border-[#383838]'
+                                }`}
+                              >
+                                <div>
+                                  <p className="text-xs font-bold text-white">{srv.nombre}</p>
+                                  <p className="text-[10px] text-gray-400">{srv.duracion_minutos} min</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs sm:text-sm font-serif font-bold text-[#d4af37]">
+                                    ${srv.precio}
+                                  </span>
+                                  <ChevronRight size={14} className="text-gray-500" />
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ======================================================== */}
+                      {/* PASO 2: SELECCIONAR BARBERO */}
+                      {/* ======================================================== */}
+                      {currentStep === 2 && (
+                        <div className="space-y-3 animate-fadeIn">
+                          <div className="flex justify-between items-center pb-2 border-b border-[#222222]">
+                            <button
+                              type="button"
+                              onClick={() => setCurrentStep(1)}
+                              className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-[#d4af37] font-semibold transition-colors"
+                            >
+                              <ArrowLeft size={13} />
+                              <span>Volver a Servicios</span>
+                            </button>
+                            <span className="text-[10px] text-[#d4af37] font-bold">
+                              {currentService.nombre} (${currentService.precio})
+                            </span>
+                          </div>
+
+                          <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
+                            <Users size={15} className="text-[#d4af37]" />
+                            <span>2. Elegí el Profesional</span>
+                          </h3>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setBarberId('any');
+                                setCurrentStep(3); // Avanza al paso 3
+                              }}
+                              className={`p-3.5 rounded-2xl border text-center transition-all active:scale-[0.98] ${
+                                barberId === 'any'
+                                  ? 'bg-[#1e1b12] border-[#d4af37] text-white shadow-md'
+                                  : 'bg-[#171717] border-[#262626] text-gray-300 hover:border-[#383838]'
+                              }`}
+                            >
+                              <div className="flex justify-center mb-1 text-[#d4af37]">
+                                <Users size={18} />
+                              </div>
+                              <p className="text-xs font-bold text-white">Cualquiera</p>
+                              <p className="text-[9px] text-gray-400">1º disponible</p>
+                            </button>
+
+                            {barbers.map((b) => (
+                              <button
+                                key={b.id}
+                                type="button"
+                                onClick={() => {
+                                  setBarberId(b.id);
+                                  setCurrentStep(3); // Avanza al paso 3
+                                }}
+                                className={`p-3.5 rounded-2xl border text-center transition-all active:scale-[0.98] ${
+                                  barberId === b.id
+                                  ? 'bg-[#1e1b12] border-[#d4af37] text-white shadow-md'
+                                  : 'bg-[#171717] border-[#262626] text-gray-300 hover:border-[#383838]'
+                                }`}
+                              >
+                                <div className="w-7 h-7 rounded-full bg-[#242424] text-[#d4af37] font-bold text-xs flex items-center justify-center mx-auto mb-1">
+                                  {b.nombre.charAt(0)}
+                                </div>
+                                <p className="text-xs font-bold text-white truncate">{b.nombre}</p>
+                                <p className="text-[9px] text-gray-400">Especialista</p>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ======================================================== */}
+                      {/* PASO 3: SELECCIONAR FECHA Y HORARIO */}
+                      {/* ======================================================== */}
+                      {currentStep === 3 && (
+                        <div className="space-y-3 animate-fadeIn">
+                          <div className="flex justify-between items-center pb-2 border-b border-[#222222]">
+                            <button
+                              type="button"
+                              onClick={() => setCurrentStep(2)}
+                              className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-[#d4af37] font-semibold transition-colors"
+                            >
+                              <ArrowLeft size={13} />
+                              <span>Volver a Barberos</span>
+                            </button>
+                            <span className="text-[10px] text-[#d4af37] font-bold">
+                              {durationMinutes} min de atención
+                            </span>
+                          </div>
+
+                          <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
+                            <Calendar size={15} className="text-[#d4af37]" />
+                            <span>3. Elegí Fecha y Horario</span>
+                          </h3>
+
+                          {/* Días en scroll horizontal */}
+                          <div className="flex gap-2 overflow-x-auto pb-1.5 scrollbar-none">
+                            {daysList.map((day) => {
+                              const isSelected = selectedDate.dateStr === day.dateStr;
+                              return (
+                                <button
+                                  key={day.dateStr}
+                                  type="button"
+                                  onClick={() => setSelectedDate(day)}
+                                  className={`px-3.5 py-2 rounded-2xl border shrink-0 text-center transition-all ${
+                                    isSelected
+                                      ? 'bg-[#d4af37] border-[#d4af37] text-black font-bold scale-[1.02]'
+                                      : 'bg-[#171717] border-[#262626] text-gray-300 hover:border-[#383838]'
+                                  }`}
+                                >
+                                  <p className="text-[9px] uppercase tracking-wider">{day.weekday}</p>
+                                  <p className="text-xs sm:text-sm font-bold">{day.dayNumber}</p>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Selector de Turnos y Grilla de Horarios */}
+                          <div className="pt-1">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                                <span>Horarios Libres ({selectedDate.displayDay})</span>
+                                {loadingSlots && <Loader2 size={11} className="animate-spin text-[#d4af37]" />}
+                              </span>
+
+                              <div className="flex bg-[#181818] p-0.5 rounded-lg border border-[#282828]">
+                                {['mañana', 'tarde', 'noche'].map((t) => (
+                                  <button
+                                    key={t}
+                                    type="button"
+                                    onClick={() => setActiveTurno(t)}
+                                    className={`px-2.5 py-0.5 rounded-md text-[9px] font-bold capitalize transition-all ${
+                                      activeTurno === t ? 'bg-[#d4af37] text-black' : 'text-gray-400 hover:text-white'
+                                    }`}
+                                  >
+                                    {t}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {availableSlotsInTurno.length > 0 ? (
+                              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1.5 max-h-[130px] overflow-y-auto pr-1">
+                                {availableSlotsInTurno.map((slot) => {
+                                  const isSelected = selectedTime === slot;
+                                  return (
+                                    <button
+                                      key={slot}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedTime(slot);
+                                        setCurrentStep(4); // Avanza automáticamente al paso 4
+                                      }}
+                                      className={`py-2 rounded-xl text-xs font-bold border transition-all active:scale-95 ${
+                                        isSelected
+                                          ? 'bg-[#d4af37] border-[#d4af37] text-black shadow-md scale-105'
+                                          : 'bg-[#171717] border-[#262626] text-gray-200 hover:border-[#d4af37]/60'
+                                      }`}
+                                    >
+                                      {slot} hs
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="bg-[#171717] border border-[#262626] rounded-xl p-3 text-center text-xs text-gray-400 flex items-center justify-center gap-2">
+                                <AlertCircle size={14} className="text-[#d4af37]" />
+                                <span>No hay cupos en este turno para {durationMinutes} min.</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ======================================================== */}
+                      {/* PASO 4: DATOS DEL CLIENTE & CONFIRMACIÓN */}
+                      {/* ======================================================== */}
+                      {currentStep === 4 && (
+                        <form onSubmit={handleBookingSubmit} className="space-y-3 animate-fadeIn">
+                          <div className="flex justify-between items-center pb-2 border-b border-[#222222]">
+                            <button
+                              type="button"
+                              onClick={() => setCurrentStep(3)}
+                              className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-[#d4af37] font-semibold transition-colors"
+                            >
+                              <ArrowLeft size={13} />
+                              <span>Cambiar Horario</span>
+                            </button>
+                            <span className="text-[10px] text-gray-400 font-semibold uppercase">Paso 4 de 4</span>
+                          </div>
+
+                          {/* Resumen Compacto */}
+                          <div className="bg-[#171717] border border-[#2a2a2a] rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-1.5 text-gray-300">
+                              <Scissors size={13} className="text-[#d4af37]" />
+                              <span className="font-bold text-white">{currentService.nombre}</span>
+                              <span className="text-[#d4af37]">(${currentService.precio})</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-gray-300">
+                              <Clock size={13} className="text-[#d4af37]" />
+                              <span>{selectedDate.displayDay} a las <strong>{selectedTime} hs</strong></span>
+                            </div>
+                          </div>
+
+                          {/* Campos de Contacto */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                                Tu Nombre Completo *
+                              </label>
+                              <input
+                                type="text"
+                                required
+                                placeholder="Ej. Lucas Silva"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                className="w-full bg-[#181818] border border-[#282828] rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37] transition-colors"
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between items-center mb-1">
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                                  Celular (Uruguay) *
+                                </label>
+                                {phone && !isValidUruguayPhone(phone) && (
+                                  <span className="text-[9px] text-amber-400">09X XXX XXX</span>
+                                )}
+                              </div>
+                              <div className="relative">
+                                <input
+                                  type="tel"
+                                  required
+                                  placeholder="099 123 456"
+                                  value={phone}
+                                  onChange={handlePhoneChange}
+                                  maxLength={11}
+                                  className={`w-full bg-[#181818] border rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none transition-colors ${
+                                    phoneError
+                                      ? 'border-red-500 focus:border-red-500'
+                                      : phone && isValidUruguayPhone(phone)
+                                      ? 'border-emerald-500/70 focus:border-emerald-500'
+                                      : 'border-[#282828] focus:border-[#d4af37]'
+                                  }`}
+                                />
+                                {phone && isValidUruguayPhone(phone) && (
+                                  <span className="absolute right-3 top-2 text-emerald-400 font-bold text-xs">
+                                    ✓
+                                  </span>
+                                )}
+                              </div>
+                              {phoneError && (
+                                <p className="text-[10px] text-red-400 mt-0.5">{phoneError}</p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div>
+                            <input
+                              type="text"
+                              placeholder="Nota o pedido especial (Opcional)..."
+                              value={notes}
+                              onChange={(e) => setNotes(e.target.value)}
+                              className="w-full bg-[#181818] border border-[#282828] rounded-xl px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37] transition-colors"
+                            />
+                          </div>
+
+                          <button
+                            type="submit"
+                            disabled={isSubmitting || !selectedTime}
+                            className="w-full flex items-center justify-center gap-2 bg-[#d4af37] hover:bg-[#b89628] text-black font-bold py-3.5 px-6 rounded-2xl text-xs tracking-widest uppercase transition-all shadow-xl shadow-[#d4af37]/20 active:scale-[0.98] disabled:opacity-40"
+                          >
+                            {isSubmitting ? (
+                              <>
+                                <Loader2 className="animate-spin" size={15} />
+                                <span>Registrando tu turno...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>CONFIRMAR RESERVA (${currentService.precio})</span>
+                                <Sparkles size={15} />
+                              </>
+                            )}
+                          </button>
+                        </form>
+                      )}
+
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 2: CLUB DE SOCIOS & LOGIN */}
+              {mainTab === 'socios' && (
+                <div className="space-y-4 animate-fadeIn">
+                  
+                  {/* Selector Registro vs Login */}
+                  <div className="flex bg-[#181818] p-1 rounded-xl border border-[#282828] mb-3">
+                    <button
+                      type="button"
+                      onClick={() => { setSocioMode('registro'); setActiveUser(null); }}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        socioMode === 'registro'
+                          ? 'bg-[#282828] text-[#d4af37] border border-[#3a3a3a] shadow-sm'
+                          : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <UserPlus size={13} />
+                      <span>Registrarme</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { setSocioMode('login'); setSocioRegistered(false); }}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        socioMode === 'login'
+                          ? 'bg-[#282828] text-[#d4af37] border border-[#3a3a3a] shadow-sm'
+                          : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <LogIn size={13} />
+                      <span>Ingresar</span>
+                    </button>
+                  </div>
+
+                  {/* Formulario Registro */}
+                  {socioMode === 'registro' && !socioRegistered && (
+                    <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                          Nombre Completo *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Ej. Lucas Silva"
+                          value={socioName}
+                          onChange={(e) => setSocioName(e.target.value)}
+                          className="w-full bg-[#171717] border border-[#262626] rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                            Celular (Uruguay) *
+                          </label>
+                          <input
+                            type="tel"
+                            required
+                            placeholder="099 123 456"
+                            value={socioPhone}
+                            onChange={(e) => setSocioPhone(formatUruguayPhone(e.target.value))}
+                            maxLength={11}
+                            className="w-full bg-[#171717] border border-[#262626] rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                            Email (Opcional)
+                          </label>
+                          <input
+                            type="email"
+                            placeholder="lucas@email.com"
+                            value={socioEmail}
+                            onChange={(e) => setSocioEmail(e.target.value)}
+                            className="w-full bg-[#171717] border border-[#262626] rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                          Crear Contraseña *
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showRegisterPassword ? 'text' : 'password'}
+                            required
+                            placeholder="Crea una clave segura"
+                            value={socioPassword}
+                            onChange={(e) => setSocioPassword(e.target.value)}
+                            className="w-full bg-[#171717] border border-[#262626] rounded-xl pl-3.5 pr-10 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowRegisterPassword(!showRegisterPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                          >
+                            {showRegisterPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Membresía VIP */}
+                      <div 
+                        onClick={() => setIsVip(!isVip)}
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer select-none flex items-start gap-3 ${
+                          isVip 
+                            ? 'bg-[#d4af37]/10 border-[#d4af37] shadow-lg shadow-[#d4af37]/5' 
+                            : 'bg-[#181818] border-[#2a2a2a]'
+                        }`}
+                      >
+                        <div className={`w-5 h-5 rounded-md flex items-center justify-center mt-0.5 shrink-0 transition-colors ${
+                          isVip ? 'bg-[#d4af37] text-black' : 'border border-[#444] bg-[#222]'
+                        }`}>
+                          {isVip && <Check size={14} />}
+                        </div>
+
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="text-xs font-bold text-white flex items-center gap-1">
+                              <Crown size={13} className="text-[#d4af37]" />
+                              Activar Membresía VIP
+                            </span>
+                            <span className="text-[8px] bg-[#d4af37] text-black font-extrabold px-1.5 py-0.5 rounded-full uppercase">
+                              Gratis
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-gray-400 leading-relaxed">
+                            Acceso preferencial en fines de semana, 15% OFF en todos los turnos y consumición libre en el lounge.
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full bg-[#d4af37] hover:bg-[#c49f2e] text-black font-bold py-3 px-6 rounded-2xl text-xs tracking-widest uppercase transition-all shadow-xl flex items-center justify-center gap-2"
+                      >
+                        <span>REGISTRARME EN EL CLUB</span>
+                        <ArrowRight size={14} />
+                      </button>
+                    </form>
+                  )}
+
+                  {/* Confirmación Registro */}
+                  {socioMode === 'registro' && socioRegistered && (
+                    <div className="text-center py-5 space-y-3 animate-fadeIn">
+                      <div className="w-12 h-12 rounded-full bg-[#d4af37]/20 border border-[#d4af37] flex items-center justify-center mx-auto text-[#d4af37]">
+                        <Crown size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-serif font-bold text-white mb-0.5">
+                          ¡Solicitud Recibida, {socioName}!
+                        </h3>
+                        <p className="text-xs text-gray-300 max-w-sm mx-auto">
+                          Te has registrado como <strong>{isVip ? 'Socio VIP ⭐' : 'Socio Estándar'}</strong>. Activá tus beneficios enviando la confirmación por WhatsApp.
+                        </p>
+                      </div>
+
+                      <div className="pt-2 max-w-xs mx-auto">
+                        <a
+                          href={socioWhatsappUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full flex items-center justify-center gap-2 bg-[#25D366] text-white font-bold py-2.5 px-4 rounded-xl text-xs tracking-wider uppercase transition-all shadow-lg"
+                        >
+                          <Send size={14} />
+                          <span>ACTIVAR POR WHATSAPP</span>
+                        </a>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setSocioRegistered(false);
+                          setSocioName('');
+                          setSocioPhone('');
+                          setSocioEmail('');
+                          setSocioPassword('');
+                        }}
+                        className="text-[11px] text-gray-400 hover:text-white underline block mx-auto pt-2"
+                      >
+                        Registrar otra cuenta
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Formulario Login */}
+                  {socioMode === 'login' && !activeUser && (
+                    <form onSubmit={handleLoginSubmit} className="space-y-3.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                          <User size={11} className="text-[#d4af37]" />
+                          <span>Celular o Email *</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Ej. 099 123 456"
+                          value={loginIdentifier}
+                          onChange={(e) => setLoginIdentifier(e.target.value)}
+                          className="w-full bg-[#171717] border border-[#262626] rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                          <Lock size={11} className="text-[#d4af37]" />
+                          <span>Contraseña *</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showLoginPassword ? 'text' : 'password'}
+                            required
+                            placeholder="Ingresa tu contraseña"
+                            value={loginPassword}
+                            onChange={(e) => setLoginPassword(e.target.value)}
+                            className="w-full bg-[#171717] border border-[#262626] rounded-xl pl-3.5 pr-10 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowLoginPassword(!showLoginPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                          >
+                            {showLoginPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full bg-[#d4af37] hover:bg-[#c49f2e] text-black font-bold py-3 px-6 rounded-2xl text-xs tracking-widest uppercase transition-all shadow-xl flex items-center justify-center gap-2 mt-2"
+                      >
+                        <LogIn size={14} />
+                        <span>INGRESAR A MI CUENTA</span>
+                      </button>
+                    </form>
+                  )}
+
+                  {/* Sesión Iniciada */}
+                  {socioMode === 'login' && activeUser && (
+                    <div className="bg-[#181818] border border-[#d4af37]/40 rounded-2xl p-4 text-center space-y-3 animate-fadeIn">
+                      <div className="w-10 h-10 rounded-full bg-[#d4af37]/20 border border-[#d4af37] flex items-center justify-center mx-auto text-[#d4af37]">
+                        <Crown size={20} />
+                      </div>
+                      <div>
+                        <span className="text-[9px] uppercase tracking-widest text-[#d4af37] font-bold block">
+                          SESIÓN INICIADA
+                        </span>
+                        <h4 className="text-sm font-bold text-white">¡Hola, {activeUser.name}!</h4>
+                        <p className="text-[11px] text-gray-400">{activeUser.identifier}</p>
+                      </div>
+
+                      <div className="bg-[#202020] border border-[#2c2c2c] rounded-xl p-2 text-xs text-gray-300 flex items-center justify-around">
+                        <div>
+                          <span className="text-[9px] text-gray-500 block uppercase">Nivel</span>
+                          <strong className="text-[#d4af37]">Socio VIP ⭐</strong>
+                        </div>
+                        <div className="w-[1px] h-5 bg-gray-700" />
+                        <div>
+                          <span className="text-[9px] text-gray-500 block uppercase">Beneficio</span>
+                          <strong className="text-white">15% OFF</strong>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setName(activeUser.name);
+                            if (isValidUruguayPhone(activeUser.identifier)) {
+                              setPhone(activeUser.identifier);
+                            }
+                            setMainTab('reserva');
+                            setCurrentStep(1);
+                          }}
+                          className="flex-1 flex items-center justify-center gap-1.5 bg-[#d4af37] text-black font-bold py-2.5 px-3 rounded-xl text-xs tracking-wider uppercase transition-all shadow-md"
+                        >
+                          <Calendar size={13} />
+                          <span>Reservar con Descuento</span>
+                        </button>
+
+                        <button
+                          onClick={() => setActiveUser(null)}
+                          className="px-3 py-2.5 bg-[#242424] hover:bg-[#303030] text-gray-300 hover:text-white rounded-xl text-xs font-semibold transition-colors"
+                        >
+                          Salir
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+            </div>
+          </div>
+
+          {/* ========================================================================= */}
+          {/* COLUMNA INFORMACIÓN COMPLETA (order-2 en mobile, order-1 en desktop) */}
+          {/* ========================================================================= */}
+          <div className="order-2 lg:order-1 lg:col-span-5 space-y-4">
             {mainTab === 'reserva' && (
               <div className="space-y-4 animate-fadeIn">
                 <div className="bg-gradient-to-br from-[#1c1708] via-[#141414] to-[#121212] border border-[#d4af37]/40 p-5 sm:p-6 rounded-3xl relative overflow-hidden shadow-xl">
@@ -501,590 +1211,6 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
             )}
           </div>
 
-          {/* Columna Derecha: Formulario dinámico */}
-          <div className="lg:col-span-7">
-            <div className="bg-[#121212] border border-[#222222] rounded-3xl p-5 sm:p-7 shadow-2xl relative">
-              
-              {/* TAB 1: RESERVA EN VIVO */}
-              {mainTab === 'reserva' && (
-                <div>
-                  {bookingConfirmed ? (
-                    <div className="text-center py-4 space-y-4 animate-fadeIn">
-                      <div className="w-14 h-14 bg-[#d4af37]/15 border border-[#d4af37] text-[#d4af37] rounded-full flex items-center justify-center mx-auto shadow-lg">
-                        <CheckCircle2 size={32} />
-                      </div>
-                      <div>
-                        <h3 className="text-xl sm:text-2xl font-serif font-bold text-white mb-1.5">
-                          ¡Turno Reservado con Éxito!
-                        </h3>
-                        <p className="text-xs text-gray-300 max-w-md mx-auto">
-                          Tu lugar ha quedado registrado. Te esperamos el <strong>{selectedDate.displayDay}</strong> a las <strong>{selectedTime} hs</strong> con <strong>{finalBarberName}</strong>.
-                        </p>
-                      </div>
-
-                      <div className="bg-[#181818] border border-[#282828] rounded-2xl p-4 text-xs text-left space-y-2 max-w-md mx-auto">
-                        <div className="flex justify-between text-gray-300">
-                          <span>Servicio:</span>
-                          <strong className="text-white">{currentService.nombre} ({durationMinutes} min)</strong>
-                        </div>
-                        <div className="flex justify-between text-gray-300">
-                          <span>Profesional:</span>
-                          <strong className="text-white">{finalBarberName}</strong>
-                        </div>
-                        <div className="flex justify-between text-gray-300">
-                          <span>Precio:</span>
-                          <strong className="text-[#d4af37]">${currentService.precio}</strong>
-                        </div>
-                        <div className="flex justify-between text-gray-300">
-                          <span>Cliente:</span>
-                          <strong className="text-white">{name} ({phone})</strong>
-                        </div>
-                      </div>
-
-                      <div className="pt-2 flex flex-col sm:flex-row gap-2.5 justify-center">
-                        <a
-                          href={bookingWhatsappUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center justify-center gap-2 bg-[#25D366] text-white px-5 py-3 rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all shadow-lg"
-                        >
-                          <MessageSquare size={15} />
-                          <span>Avisar al Local por WhatsApp</span>
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setBookingConfirmed(false);
-                            setName('');
-                            setPhone('');
-                            setNotes('');
-                            setPhoneError('');
-                            setAssignedBarber(null);
-                            fetchBookings();
-                          }}
-                          className="px-5 py-3 rounded-xl text-xs font-bold text-gray-400 hover:text-white border border-[#2e2e2e] transition-colors"
-                        >
-                          Nueva Reserva
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <form onSubmit={handleBookingSubmit} className="space-y-4">
-                      
-                      {/* 1. Selección de Servicio */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-gray-300 uppercase tracking-wider mb-2">
-                          1. Elegí el Servicio
-                        </label>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {services.map((srv) => (
-                            <button
-                              key={srv.id}
-                              type="button"
-                              onClick={() => setServiceId(srv.id)}
-                              className={`p-3 rounded-2xl border text-left flex justify-between items-center transition-all ${
-                                serviceId === srv.id
-                                  ? 'bg-[#1e1b12] border-[#d4af37] text-white shadow-md'
-                                  : 'bg-[#181818] border-[#262626] text-gray-300 hover:border-gray-600'
-                              }`}
-                            >
-                              <div>
-                                <p className="text-xs font-bold text-white">{srv.nombre}</p>
-                                <p className="text-[10px] text-gray-400">{srv.duracion_minutos} min</p>
-                              </div>
-                              <span className="text-xs font-serif font-bold text-[#d4af37]">
-                                ${srv.precio}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 2. Selección de Barbero */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-gray-300 uppercase tracking-wider mb-2">
-                          2. Elegí el Profesional
-                        </label>
-                        <div className="grid grid-cols-3 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setBarberId('any')}
-                            className={`p-2.5 rounded-2xl border text-center transition-all ${
-                              barberId === 'any'
-                                ? 'bg-[#1e1b12] border-[#d4af37] text-white shadow-md'
-                                : 'bg-[#181818] border-[#262626] text-gray-300 hover:border-gray-600'
-                            }`}
-                          >
-                            <div className="flex justify-center mb-0.5 text-[#d4af37]">
-                              <Users size={15} />
-                            </div>
-                            <p className="text-[11px] font-bold text-white">Cualquiera</p>
-                            <p className="text-[9px] text-gray-400">1º disponible</p>
-                          </button>
-
-                          {barbers.map((b) => (
-                            <button
-                              key={b.id}
-                              type="button"
-                              onClick={() => setBarberId(b.id)}
-                              className={`p-2.5 rounded-2xl border text-center transition-all ${
-                                barberId === b.id
-                                  ? 'bg-[#1e1b12] border-[#d4af37] text-white shadow-md'
-                                  : 'bg-[#181818] border-[#262626] text-gray-300 hover:border-gray-600'
-                              }`}
-                            >
-                              <div className="flex justify-center mb-0.5 text-gray-400">
-                                <Scissors size={15} />
-                              </div>
-                              <p className="text-[11px] font-bold text-white truncate">{b.nombre}</p>
-                              <p className="text-[9px] text-gray-400">Especialista</p>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 3. Selección de Fecha */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-gray-300 uppercase tracking-wider mb-2">
-                          3. Elegí la Fecha
-                        </label>
-                        <div className="flex gap-2 overflow-x-auto pb-1.5 scrollbar-none">
-                          {daysList.map((day) => (
-                            <button
-                              key={day.dateStr}
-                              type="button"
-                              onClick={() => setSelectedDate(day)}
-                              className={`px-3 py-2 rounded-2xl border shrink-0 text-center transition-all ${
-                                selectedDate.dateStr === day.dateStr
-                                  ? 'bg-[#d4af37] border-[#d4af37] text-black font-bold shadow-md'
-                                  : 'bg-[#181818] border-[#262626] text-gray-300 hover:border-gray-600'
-                              }`}
-                            >
-                              <p className="text-[9px] uppercase tracking-wider">{day.weekday}</p>
-                              <p className="text-xs sm:text-sm font-bold">{day.dayNumber}</p>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 4. Horarios Disponibles */}
-                      <div>
-                        <div className="flex justify-between items-center mb-2">
-                          <label className="text-[11px] font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
-                            <span>4. Horarios ({durationMinutes} min)</span>
-                            {loadingSlots && <Loader2 size={11} className="animate-spin text-[#d4af37]" />}
-                          </label>
-                          
-                          <div className="flex bg-[#1c1c1c] p-0.5 rounded-lg border border-[#2b2b2b]">
-                            {['mañana', 'tarde', 'noche'].map((t) => (
-                              <button
-                                key={t}
-                                type="button"
-                                onClick={() => setActiveTurno(t)}
-                                className={`px-2 py-0.5 rounded-md text-[9px] uppercase font-bold transition-all ${
-                                  activeTurno === t
-                                    ? 'bg-[#d4af37] text-black'
-                                    : 'text-gray-400 hover:text-white'
-                                }`}
-                              >
-                                {t}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {availableSlotsInTurno.length > 0 ? (
-                          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1.5">
-                            {availableSlotsInTurno.map((slot) => (
-                              <button
-                                key={slot}
-                                type="button"
-                                onClick={() => setSelectedTime(slot)}
-                                className={`py-2 rounded-xl text-xs font-bold border transition-all ${
-                                  selectedTime === slot
-                                    ? 'bg-[#d4af37] border-[#d4af37] text-black shadow-md scale-[1.02]'
-                                    : 'bg-[#181818] border-[#262626] text-gray-200 hover:border-[#d4af37]/60'
-                                }`}
-                              >
-                                {slot}
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="bg-[#181818] border border-[#262626] rounded-xl p-3 text-center text-xs text-gray-400 flex items-center justify-center gap-2">
-                            <AlertCircle size={14} className="text-[#d4af37]" />
-                            <span>No hay espacio suficiente en este turno.</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 5. Datos del Cliente */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[#222222]">
-                        <div>
-                          <label className="block text-[10px] uppercase font-bold text-gray-400 mb-1">
-                            Tu Nombre Completo *
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            placeholder="Ej: Matías Rodríguez"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            className="w-full bg-[#181818] border border-[#2b2b2b] rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="block text-[10px] uppercase font-bold text-gray-400">
-                              Celular / WhatsApp *
-                            </label>
-                            {phone && !isValidUruguayPhone(phone) && (
-                              <span className="text-[9px] text-amber-400">09X XXX XXX</span>
-                            )}
-                          </div>
-                          <div className="relative">
-                            <input
-                              type="tel"
-                              required
-                              placeholder="099 123 456"
-                              value={phone}
-                              onChange={handlePhoneChange}
-                              maxLength={11}
-                              className={`w-full bg-[#181818] border rounded-xl px-3 py-2 text-xs text-white placeholder-gray-600 focus:outline-none transition-colors ${
-                                phoneError
-                                  ? 'border-red-500 focus:border-red-500'
-                                  : phone && isValidUruguayPhone(phone)
-                                  ? 'border-emerald-500/70 focus:border-emerald-500'
-                                  : 'border-[#2b2b2b] focus:border-[#d4af37]'
-                              }`}
-                            />
-                            {phone && isValidUruguayPhone(phone) && (
-                              <span className="absolute right-3 top-2 text-emerald-400 font-bold text-xs">
-                                ✓
-                              </span>
-                            )}
-                          </div>
-                          {phoneError && (
-                            <p className="text-[10px] text-red-400 mt-0.5">{phoneError}</p>
-                          )}
-                        </div>
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={isSubmitting || !selectedTime}
-                        className="w-full bg-[#d4af37] text-black py-3 rounded-2xl text-xs font-bold uppercase tracking-wider hover:bg-[#c49f2e] transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed mt-2"
-                      >
-                        {isSubmitting ? (
-                          <>
-                            <Loader2 className="animate-spin" size={15} />
-                            <span>Registrando tu turno...</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>Confirmar Reserva {selectedTime ? `(${selectedTime} hs)` : ''}</span>
-                            <ChevronRight size={15} />
-                          </>
-                        )}
-                      </button>
-                    </form>
-                  )}
-                </div>
-              )}
-
-              {/* TAB 2: CLUB DE SOCIOS & LOGIN */}
-              {mainTab === 'socios' && (
-                <div className="space-y-4 animate-fadeIn">
-                  
-                  {/* Selector Registro vs Login */}
-                  <div className="flex bg-[#181818] p-1 rounded-xl border border-[#282828] mb-3">
-                    <button
-                      type="button"
-                      onClick={() => { setSocioMode('registro'); setActiveUser(null); }}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                        socioMode === 'registro'
-                          ? 'bg-[#282828] text-[#d4af37] border border-[#3a3a3a] shadow-sm'
-                          : 'text-gray-400 hover:text-white'
-                      }`}
-                    >
-                      <UserPlus size={13} />
-                      <span>Registrarme</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => { setSocioMode('login'); setSocioRegistered(false); }}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                        socioMode === 'login'
-                          ? 'bg-[#282828] text-[#d4af37] border border-[#3a3a3a] shadow-sm'
-                          : 'text-gray-400 hover:text-white'
-                      }`}
-                    >
-                      <LogIn size={13} />
-                      <span>Ingresar</span>
-                    </button>
-                  </div>
-
-                  {/* Formulario de Registro */}
-                  {socioMode === 'registro' && !socioRegistered && (
-                    <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                          Nombre Completo *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="Ej. Lucas Silva"
-                          value={socioName}
-                          onChange={(e) => setSocioName(e.target.value)}
-                          className="w-full bg-[#181818] border border-[#262626] rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                            Celular (Uruguay) *
-                          </label>
-                          <input
-                            type="tel"
-                            required
-                            placeholder="099 123 456"
-                            value={socioPhone}
-                            onChange={(e) => setSocioPhone(formatUruguayPhone(e.target.value))}
-                            maxLength={11}
-                            className="w-full bg-[#181818] border border-[#262626] rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                            Email (Opcional)
-                          </label>
-                          <input
-                            type="email"
-                            placeholder="lucas@email.com"
-                            value={socioEmail}
-                            onChange={(e) => setSocioEmail(e.target.value)}
-                            className="w-full bg-[#181818] border border-[#262626] rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                          Crear Contraseña *
-                        </label>
-                        <div className="relative">
-                          <input
-                            type={showRegisterPassword ? 'text' : 'password'}
-                            required
-                            placeholder="Crea una clave segura"
-                            value={socioPassword}
-                            onChange={(e) => setSocioPassword(e.target.value)}
-                            className="w-full bg-[#181818] border border-[#262626] rounded-xl pl-3.5 pr-10 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowRegisterPassword(!showRegisterPassword)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
-                          >
-                            {showRegisterPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Tarjeta Membresía VIP */}
-                      <div 
-                        onClick={() => setIsVip(!isVip)}
-                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer select-none flex items-start gap-3 ${
-                          isVip 
-                            ? 'bg-[#d4af37]/10 border-[#d4af37] shadow-lg shadow-[#d4af37]/5' 
-                            : 'bg-[#181818] border-[#2a2a2a]'
-                        }`}
-                      >
-                        <div className={`w-5 h-5 rounded-md flex items-center justify-center mt-0.5 shrink-0 transition-colors ${
-                          isVip ? 'bg-[#d4af37] text-black' : 'border border-[#444] bg-[#222]'
-                        }`}>
-                          {isVip && <Check size={14} />}
-                        </div>
-
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className="text-xs font-bold text-white flex items-center gap-1">
-                              <Crown size={13} className="text-[#d4af37]" />
-                              Activar Membresía VIP
-                            </span>
-                            <span className="text-[8px] bg-[#d4af37] text-black font-extrabold px-1.5 py-0.5 rounded-full uppercase">
-                              Gratis
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-gray-400 leading-relaxed">
-                            Acceso preferencial en fines de semana, 15% OFF en todos los turnos y consumición libre en el lounge.
-                          </p>
-                        </div>
-                      </div>
-
-                      <button
-                        type="submit"
-                        className="w-full bg-[#d4af37] hover:bg-[#c49f2e] text-black font-bold py-3 px-6 rounded-2xl text-xs tracking-widest uppercase transition-all shadow-xl flex items-center justify-center gap-2"
-                      >
-                        <span>REGISTRARME EN EL CLUB</span>
-                        <ArrowRight size={14} />
-                      </button>
-                    </form>
-                  )}
-
-                  {/* Confirmación de Registro de Socio */}
-                  {socioMode === 'registro' && socioRegistered && (
-                    <div className="text-center py-5 space-y-3 animate-fadeIn">
-                      <div className="w-12 h-12 rounded-full bg-[#d4af37]/20 border border-[#d4af37] flex items-center justify-center mx-auto text-[#d4af37]">
-                        <Crown size={24} />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-serif font-bold text-white mb-0.5">
-                          ¡Solicitud Recibida, {socioName}!
-                        </h3>
-                        <p className="text-xs text-gray-300 max-w-sm mx-auto">
-                          Te has registrado como <strong>{isVip ? 'Socio VIP ⭐' : 'Socio Estándar'}</strong>. Activá tus beneficios enviando la confirmación por WhatsApp.
-                        </p>
-                      </div>
-
-                      <div className="pt-2 max-w-xs mx-auto">
-                        <a
-                          href={socioWhatsappUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="w-full flex items-center justify-center gap-2 bg-[#25D366] text-white font-bold py-2.5 px-4 rounded-xl text-xs tracking-wider uppercase transition-all shadow-lg"
-                        >
-                          <Send size={14} />
-                          <span>ACTIVAR POR WHATSAPP</span>
-                        </a>
-                      </div>
-
-                      <button
-                        onClick={() => {
-                          setSocioRegistered(false);
-                          setSocioName('');
-                          setSocioPhone('');
-                          setSocioEmail('');
-                          setSocioPassword('');
-                        }}
-                        className="text-[11px] text-gray-400 hover:text-white underline block mx-auto pt-2"
-                      >
-                        Registrar otra cuenta
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Formulario de Login */}
-                  {socioMode === 'login' && !activeUser && (
-                    <form onSubmit={handleLoginSubmit} className="space-y-3.5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                          <User size={11} className="text-[#d4af37]" />
-                          <span>Celular o Email *</span>
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="Ej. 099 123 456"
-                          value={loginIdentifier}
-                          onChange={(e) => setLoginIdentifier(e.target.value)}
-                          className="w-full bg-[#181818] border border-[#262626] rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                          <Lock size={11} className="text-[#d4af37]" />
-                          <span>Contraseña *</span>
-                        </label>
-                        <div className="relative">
-                          <input
-                            type={showLoginPassword ? 'text' : 'password'}
-                            required
-                            placeholder="Ingresa tu contraseña"
-                            value={loginPassword}
-                            onChange={(e) => setLoginPassword(e.target.value)}
-                            className="w-full bg-[#181818] border border-[#262626] rounded-xl pl-3.5 pr-10 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#d4af37]"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowLoginPassword(!showLoginPassword)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
-                          >
-                            {showLoginPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                          </button>
-                        </div>
-                      </div>
-
-                      <button
-                        type="submit"
-                        className="w-full bg-[#d4af37] hover:bg-[#c49f2e] text-black font-bold py-3 px-6 rounded-2xl text-xs tracking-widest uppercase transition-all shadow-xl flex items-center justify-center gap-2 mt-2"
-                      >
-                        <LogIn size={14} />
-                        <span>INGRESAR A MI CUENTA</span>
-                      </button>
-                    </form>
-                  )}
-
-                  {/* Estado de Sesión Iniciada */}
-                  {socioMode === 'login' && activeUser && (
-                    <div className="bg-[#181818] border border-[#d4af37]/40 rounded-2xl p-4 text-center space-y-3 animate-fadeIn">
-                      <div className="w-10 h-10 rounded-full bg-[#d4af37]/20 border border-[#d4af37] flex items-center justify-center mx-auto text-[#d4af37]">
-                        <Crown size={20} />
-                      </div>
-                      <div>
-                        <span className="text-[9px] uppercase tracking-widest text-[#d4af37] font-bold block">
-                          SESIÓN INICIADA
-                        </span>
-                        <h4 className="text-sm font-bold text-white">¡Hola, {activeUser.name}!</h4>
-                        <p className="text-[11px] text-gray-400">{activeUser.identifier}</p>
-                      </div>
-
-                      <div className="bg-[#202020] border border-[#2c2c2c] rounded-xl p-2 text-xs text-gray-300 flex items-center justify-around">
-                        <div>
-                          <span className="text-[9px] text-gray-500 block uppercase">Nivel</span>
-                          <strong className="text-[#d4af37]">Socio VIP ⭐</strong>
-                        </div>
-                        <div className="w-[1px] h-5 bg-gray-700" />
-                        <div>
-                          <span className="text-[9px] text-gray-500 block uppercase">Beneficio</span>
-                          <strong className="text-white">15% OFF</strong>
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => {
-                            setName(activeUser.name);
-                            if (isValidUruguayPhone(activeUser.identifier)) {
-                              setPhone(activeUser.identifier);
-                            }
-                            setMainTab('reserva');
-                          }}
-                          className="flex-1 flex items-center justify-center gap-1.5 bg-[#d4af37] text-black font-bold py-2.5 px-3 rounded-xl text-xs tracking-wider uppercase transition-all shadow-md"
-                        >
-                          <Calendar size={13} />
-                          <span>Reservar con Descuento</span>
-                        </button>
-
-                        <button
-                          onClick={() => setActiveUser(null)}
-                          className="px-3 py-2.5 bg-[#242424] hover:bg-[#303030] text-gray-300 hover:text-white rounded-xl text-xs font-semibold transition-colors"
-                        >
-                          Salir
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
         </div>
       )}
     </section>
