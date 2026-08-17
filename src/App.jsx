@@ -1,7 +1,7 @@
 // src/App.jsx
 import React, { useState } from 'react';
 import Preloader from './components/layout/Preloader';
-import Navbar from './components/layout/Navbar';
+import NavBar from './components/layout/Navbar';
 import HeroSection from './components/sections/HeroSection';
 import MarqueeTicker from './components/sections/MarqueeTicker';
 import ServicesSection from './components/sections/ServicesSection';
