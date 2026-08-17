@@ -1,7 +1,7 @@
 // src/App.jsx
 import React, { useState } from 'react';
 import Preloader from './components/layout/Preloader';
-import NavBar from './components/layout/Navbar';
+import NavBar from './components/layout/NavBar';
 import HeroSection from './components/sections/HeroSection';
 import MarqueeTicker from './components/sections/MarqueeTicker';
 import ServicesSection from './components/sections/ServicesSection';
@@ -18,6 +18,7 @@ export default function App() {
   const [selectedBarberId, setSelectedBarberId] = useState(null);
   const [initialWidgetTab, setInitialWidgetTab] = useState('reserva');
 
+  //algo nuevo
   // Función para ir a Reserva
   const scrollToBooking = (srvId = null, barberId = null) => {
     if (srvId) setSelectedServiceId(srvId);
