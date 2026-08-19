@@ -1,48 +1,68 @@
 // src/pages/AdminPage.jsx
 import React, { useState, useEffect } from 'react';
-import { 
-  Calendar, Scissors, Users, Clock, Phone, CheckCircle2, 
-  XCircle, AlertCircle, Plus, Edit2, ArrowLeft,
-  MessageSquare, Loader2, Power, RefreshCw, Eye, EyeOff,
-  Lock, Mail, LogOut, ShieldCheck
-} from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { studioData } from '../data/mockData';
-import logoImg from '../assets/logo.png';
+
+// Componentes modulares
+import { AdminLogin } from '../components/admin/auth/AdminLogin';
+import { AdminHeader } from '../components/admin/layout/AdminHeader';
+import { AdminSidebar } from '../components/admin/layout/AdminSidebar';
+
+// Pestañas
+import { CitasTab } from '../components/admin/tabs/CitasTab';
+import { FacturacionTab } from '../components/admin/tabs/FacturacionTab';
+import { StockTab } from '../components/admin/tabs/StockTab';
+import { PromocionesTab } from '../components/admin/tabs/PromocionesTab';
+import { ServiciosTab } from '../components/admin/tabs/ServiciosTab';
+import { BarberosTab } from '../components/admin/tabs/BarberosTab';
+
+// Modales
+import { ServiceModal } from '../components/admin/modals/ServiceModal';
+import { BarberModal } from '../components/admin/modals/BarberModal';
+import { StockModal } from '../components/admin/modals/StockModal';
+import { PromoModal } from '../components/admin/modals/PromoModal';
+import { ManualCorteModal } from '../components/admin/modals/ManualCorteModal';
 
 export default function AdminPage() {
-  // Estados de Autenticación de Supabase
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
 
-  // Estados del Panel de Administración
-  const [activeTab, setActiveTab] = useState('citas'); // 'citas' | 'servicios' | 'barberos'
+  const [activeTab, setActiveTab] = useState('citas');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Datos
   const [citas, setCitas] = useState([]);
   const [servicios, setServicios] = useState([]);
   const [barberos, setBarberos] = useState([]);
+  const [asistencias, setAsistencias] = useState({});
+  const [inventario, setInventario] = useState([]);
+  const [promociones, setPromociones] = useState([]);
+  const [manualCortes, setManualCortes] = useState([]);
 
-  // Filtros
   const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
   const [filterBarber, setFilterBarber] = useState('all');
 
-  // Modales
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [editingService, setEditingService] = useState(null);
   const [serviceForm, setServiceForm] = useState({ nombre: '', descripcion: '', duracion_minutos: 30, precio: '' });
 
   const [showBarberModal, setShowBarberModal] = useState(false);
   const [editingBarber, setEditingBarber] = useState(null);
-  const [barberForm, setBarberForm] = useState({ nombre: '', telefono: '', email: '' });
+  const [barberForm, setBarberForm] = useState({ nombre: '', telefono: '', email: '', hora_inicio: '10:00', hora_fin: '20:00' });
 
-  // 1. Verificar si hay sesión activa en el navegador
+  const [showStockModal, setShowStockModal] = useState(false);
+  const [editingStock, setEditingStock] = useState(null);
+  const [stockForm, setStockForm] = useState({ nombre: '', tipo: 'Venta', stock: 10, min_stock: 3, precio_costo: '', precio_venta: '' });
+
+  const [showPromoModal, setShowPromoModal] = useState(false);
+  const [editingPromo, setEditingPromo] = useState(null);
+  const [promoForm, setPromoForm] = useState({ titulo: '', descuento: '', descripcion: '', codigo: '', activo: true });
+
+  const [showManualCorteModal, setShowManualCorteModal] = useState(false);
+
+  // Autenticación
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -56,16 +76,14 @@ export default function AdminPage() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 2. Iniciar Sesión de Administrador
-  const handleAdminLogin = async (e) => {
-    e.preventDefault();
+  const handleAdminLogin = async (email, password) => {
     setLoggingIn(true);
     setLoginError('');
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginEmail.trim(),
-        password: loginPassword
+        email: email.trim(),
+        password: password
       });
 
       if (error) throw error;
@@ -81,23 +99,51 @@ export default function AdminPage() {
     }
   };
 
-  // 3. Cerrar Sesión
   const handleAdminLogout = async () => {
     await supabase.auth.signOut();
     setSession(null);
   };
 
-  // 4. Cargar datos del panel solo si está autenticado
+  // Consultas principales
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [srvRes, brbRes] = await Promise.all([
+      const hoyStr = new Date().toISOString().split('T')[0];
+
+      const [srvRes, brbRes, invRes, prmRes, manRes, asisRes] = await Promise.all([
         supabase.from('servicios').select('*').order('precio', { ascending: true }),
-        supabase.from('barberos').select('*').order('nombre', { ascending: true })
+        supabase.from('barberos').select('*, horarios_trabajo(hora_inicio, hora_fin)').order('nombre', { ascending: true }),
+        supabase.from('inventario').select('*').order('nombre', { ascending: true }).then(r => r).catch(() => ({ data: null })),
+        supabase.from('promociones').select('*').order('created_at', { ascending: false }).then(r => r).catch(() => ({ data: null })),
+        supabase.from('cortes_manuales').select('*').order('created_at', { ascending: false }).then(r => r).catch(() => ({ data: null })),
+        supabase.from('asistencias_barberos').select('*').eq('fecha', hoyStr).then(r => r).catch(() => ({ data: null }))
       ]);
 
       if (srvRes.data) setServicios(srvRes.data);
-      if (brbRes.data) setBarberos(brbRes.data);
+      
+      if (brbRes.data) {
+        const barberosConHorarios = brbRes.data.map(b => {
+          const primerHorario = Array.isArray(b.horarios_trabajo) ? b.horarios_trabajo[0] : null;
+          return {
+            ...b,
+            hora_inicio: primerHorario?.hora_inicio || '10:00:00',
+            hora_fin: primerHorario?.hora_fin || '20:00:00'
+          };
+        });
+        setBarberos(barberosConHorarios);
+      }
+
+      if (asisRes && asisRes.data) {
+        const mapAsis = {};
+        asisRes.data.forEach(a => {
+          mapAsis[a.barbero_id] = a.estado;
+        });
+        setAsistencias(mapAsis);
+      }
+
+      if (invRes && invRes.data && invRes.data.length > 0) setInventario(invRes.data);
+      if (prmRes && prmRes.data && prmRes.data.length > 0) setPromociones(prmRes.data);
+      if (manRes && manRes.data && manRes.data.length > 0) setManualCortes(manRes.data);
 
       await fetchCitas();
     } catch (err) {
@@ -108,6 +154,7 @@ export default function AdminPage() {
   };
 
   const fetchCitas = async () => {
+    if (!filterDate) return;
     try {
       const localStart = new Date(`${filterDate}T00:00:00`).toISOString();
       const localEnd = new Date(`${filterDate}T23:59:59.999`).toISOString();
@@ -150,12 +197,11 @@ export default function AdminPage() {
   }, [session]);
 
   useEffect(() => {
-    if (session) {
+    if (session && filterDate) {
       fetchCitas();
     }
   }, [filterDate, filterBarber]);
 
-  // Cambiar estado de cita
   const updateCitaStatus = async (citaId, nuevoEstado) => {
     try {
       const { error } = await supabase
@@ -170,7 +216,114 @@ export default function AdminPage() {
     }
   };
 
-  // Guardar / Editar Servicio
+  // Guardar barbero y sus horarios
+  const handleSaveBarber = async (e) => {
+    e.preventDefault();
+    const horaIni = (barberForm.hora_inicio || '10:00') + ':00';
+    const horaFin = (barberForm.hora_fin || '20:00') + ':00';
+
+    try {
+      if (editingBarber) {
+        const { error: brbErr } = await supabase
+          .from('barberos')
+          .update({
+            nombre: barberForm.nombre,
+            telefono: barberForm.telefono,
+            email: barberForm.email
+          })
+          .eq('id', editingBarber.id);
+        if (brbErr) throw brbErr;
+
+        await supabase
+          .from('horarios_trabajo')
+          .update({ hora_inicio: horaIni, hora_fin: horaFin })
+          .eq('barbero_id', editingBarber.id);
+      } else {
+        const { data, error: brbErr } = await supabase
+          .from('barberos')
+          .insert([{
+            nombre: barberForm.nombre,
+            telefono: barberForm.telefono,
+            email: barberForm.email,
+            activo: true
+          }])
+          .select()
+          .single();
+
+        if (brbErr) throw brbErr;
+
+        const diasSemana = Array.from({ length: 6 }, (_, i) => i + 1);
+        const horarios = diasSemana.map((dia) => ({
+          barbero_id: data.id,
+          dia_semana: dia,
+          hora_inicio: horaIni,
+          hora_fin: horaFin,
+          activo: true
+        }));
+
+        await supabase.from('horarios_trabajo').insert(horarios);
+      }
+
+      setShowBarberModal(false);
+      setEditingBarber(null);
+      setBarberForm({ nombre: '', telefono: '', email: '', hora_inicio: '10:00', hora_fin: '20:00' });
+      fetchData();
+    } catch (err) {
+      alert(`Error al guardar barbero: ${err.message}`);
+    }
+  };
+
+  const toggleBarberActive = async (barber) => {
+    try {
+      const { error } = await supabase
+        .from('barberos')
+        .update({ activo: !barber.activo })
+        .eq('id', barber.id);
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    }
+  };
+
+  const handleDeleteBarber = async (id) => {
+    if (!confirm('¿Deseas eliminar este barbero?')) return;
+    try {
+      await supabase.from('horarios_trabajo').delete().eq('barbero_id', id);
+      const { error } = await supabase.from('barberos').delete().eq('id', id);
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      alert(`Error al eliminar: ${err.message}`);
+    }
+  };
+
+  // Actualizar asistencia diaria de barbero
+  const handleUpdateAsistencia = async (barberoId, nuevoEstado) => {
+    const hoyStr = new Date().toISOString().split('T')[0];
+    setAsistencias(prev => ({ ...prev, [barberoId]: nuevoEstado }));
+
+    try {
+      await supabase.from('asistencias_barberos').upsert({
+        barbero_id: barberoId,
+        fecha: hoyStr,
+        estado: nuevoEstado
+      });
+
+      if (nuevoEstado === 'ausente' || nuevoEstado === 'franco') {
+        await supabase.from('bloqueos_agenda').insert([{
+          barbero_id: barberoId,
+          fecha_inicio: `${hoyStr}T00:00:00`,
+          fecha_fin: `${hoyStr}T23:59:59`,
+          motivo: `Inasistencia / ${nuevoEstado}`
+        }]);
+      }
+    } catch (err) {
+      console.error('Error al actualizar asistencia:', err);
+    }
+  };
+
+  // Servicios
   const handleSaveService = async (e) => {
     e.preventDefault();
     try {
@@ -220,68 +373,139 @@ export default function AdminPage() {
     }
   };
 
-  // Guardar / Editar Barbero
-  const handleSaveBarber = async (e) => {
-    e.preventDefault();
+  const handleDeleteService = async (id) => {
+    if (!confirm('¿Deseas eliminar este servicio de la base de datos?')) return;
     try {
-      if (editingBarber) {
-        const { error } = await supabase
-          .from('barberos')
-          .update({
-            nombre: barberForm.nombre,
-            telefono: barberForm.telefono,
-            email: barberForm.email
-          })
-          .eq('id', editingBarber.id);
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase
-          .from('barberos')
-          .insert([{
-            nombre: barberForm.nombre,
-            telefono: barberForm.telefono,
-            email: barberForm.email,
-            activo: true
-          }])
-          .select()
-          .single();
-
-        if (error) throw error;
-
-        // Horarios base
-        const horarios = [1, 2, 3, 4, 5, 6].map(dia => ({
-          barbero_id: data.id,
-          dia_semana: dia,
-          hora_inicio: '10:00:00',
-          hora_fin: '20:00:00'
-        }));
-
-        await supabase.from('horarios_trabajo').insert(horarios);
-      }
-
-      setShowBarberModal(false);
-      setEditingBarber(null);
-      setBarberForm({ nombre: '', telefono: '', email: '' });
-      fetchData();
-    } catch (err) {
-      alert(`Error al guardar barbero: ${err.message}`);
-    }
-  };
-
-  const toggleBarberActive = async (barber) => {
-    try {
-      const { error } = await supabase
-        .from('barberos')
-        .update({ activo: !barber.activo })
-        .eq('id', barber.id);
+      const { error } = await supabase.from('servicios').delete().eq('id', id);
       if (error) throw error;
       fetchData();
     } catch (err) {
-      alert(`Error: ${err.message}`);
+      alert(`Error al eliminar: ${err.message}`);
     }
   };
 
-  // Mientras verifica sesión
+  // Stock
+  const handleSaveStock = async (e) => {
+    e.preventDefault();
+    const itemData = {
+      nombre: stockForm.nombre,
+      tipo: stockForm.tipo,
+      stock: parseInt(stockForm.stock),
+      min_stock: parseInt(stockForm.min_stock),
+      precio_costo: parseFloat(stockForm.precio_costo || 0),
+      precio_venta: parseFloat(stockForm.precio_venta || 0)
+    };
+
+    try {
+      if (editingStock && editingStock.id) {
+        await supabase.from('inventario').update(itemData).eq('id', editingStock.id);
+      } else {
+        await supabase.from('inventario').insert([itemData]);
+      }
+    } catch (_) {}
+
+    setShowStockModal(false);
+    setEditingStock(null);
+    setStockForm({ nombre: '', tipo: 'Venta', stock: 10, min_stock: 3, precio_costo: '', precio_venta: '' });
+    fetchData();
+  };
+
+  const adjustStockQty = async (id, delta) => {
+    const item = inventario.find(i => i.id === id);
+    if (!item) return;
+    const newStock = Math.max(0, item.stock + delta);
+    setInventario(inventario.map(i => i.id === id ? { ...i, stock: newStock } : i));
+    try {
+      await supabase.from('inventario').update({ stock: newStock }).eq('id', id);
+    } catch (_) {}
+  };
+
+  const handleDeleteStock = async (id) => {
+    if (!confirm('¿Deseas eliminar este producto del inventario?')) return;
+    setInventario(inventario.filter(i => i.id !== id));
+    try {
+      await supabase.from('inventario').delete().eq('id', id);
+    } catch (_) {}
+  };
+
+  // Promociones
+  const handleSavePromo = async (e) => {
+    e.preventDefault();
+    const promoData = {
+      titulo: promoForm.titulo,
+      descuento: promoForm.descuento,
+      descripcion: promoForm.descripcion,
+      codigo: promoForm.codigo,
+      activo: promoForm.activo
+    };
+
+    try {
+      if (editingPromo && editingPromo.id) {
+        await supabase.from('promociones').update(promoData).eq('id', editingPromo.id);
+      } else {
+        await supabase.from('promociones').insert([promoData]);
+      }
+    } catch (_) {}
+
+    setShowPromoModal(false);
+    setEditingPromo(null);
+    setPromoForm({ titulo: '', descuento: '', descripcion: '', codigo: '', activo: true });
+    fetchData();
+  };
+
+  const togglePromoActive = async (promo) => {
+    const nuevoEstado = !promo.activo;
+    setPromociones(promociones.map(p => p.id === promo.id ? { ...p, activo: nuevoEstado } : p));
+    try {
+      await supabase.from('promociones').update({ activo: nuevoEstado }).eq('id', promo.id);
+    } catch (_) {}
+  };
+
+  const handleDeletePromo = async (id) => {
+    if (!confirm('¿Deseas eliminar esta promoción?')) return;
+    setPromociones(promociones.filter(p => p.id !== id));
+    try {
+      await supabase.from('promociones').delete().eq('id', id);
+    } catch (_) {}
+  };
+
+  // Cobro Manual
+  const handleSaveManualCorte = async (nuevoCobro) => {
+    setManualCortes(prev => [nuevoCobro, ...prev]);
+    try {
+      await supabase.from('cortes_manuales').insert([{
+        cliente_nombre: nuevoCobro.cliente_nombre,
+        barbero_id: nuevoCobro.barbero_id,
+        barbero_nombre: nuevoCobro.barbero_nombre,
+        servicio_id: nuevoCobro.servicio_id,
+        servicio_nombre: nuevoCobro.servicio_nombre,
+        monto: nuevoCobro.monto,
+        propina: nuevoCobro.propina,
+        total: nuevoCobro.total,
+        metodo: nuevoCobro.metodo,
+        fecha: nuevoCobro.fecha,
+        hora: nuevoCobro.hora
+      }]);
+    } catch (_) {}
+  };
+
+  const badges = {
+    citas: citas.filter(c => c.estado === 'pendiente').length,
+    stock: inventario.filter(i => i.stock <= i.min_stock).length,
+    promociones: promociones.filter(p => p.activo).length
+  };
+
+  const hoyStr = new Date().toISOString().split('T')[0];
+  const totalFacturadoHoy = [
+    ...citas.filter(c => c.estado === 'completada' && c.fecha_hora_inicio && c.fecha_hora_inicio.startsWith(hoyStr)).map(c => Number(c.servicios?.precio || 0)),
+    ...manualCortes.filter(m => m.fecha === hoyStr).map(m => Number(m.total || 0))
+  ].reduce((a, b) => a + b, 0);
+
+  const totalCortesHoyCount = [
+    ...citas.filter(c => c.estado === 'completada' && c.fecha_hora_inicio && c.fecha_hora_inicio.startsWith(hoyStr)),
+    ...manualCortes.filter(m => m.fecha === hoyStr)
+  ].length;
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#080808] flex flex-col items-center justify-center text-gray-400 gap-3">
@@ -291,659 +515,213 @@ export default function AdminPage() {
     );
   }
 
-  // =========================================================================
-  // VISTA 1: PANTALLA DE LOGIN (SI NO HAY SESIÓN ACTIVA)
-  // =========================================================================
   if (!session) {
     return (
-      <div className="min-h-screen bg-[#080808] text-white flex flex-col items-center justify-center p-4 relative font-sans selection:bg-[#d4af37] selection:text-black">
-        
-        {/* Glow decorativo de fondo */}
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-[#d4af37]/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="w-full max-w-sm bg-[#121212] border border-[#262626] rounded-3xl p-6 sm:p-8 shadow-2xl relative animate-fadeIn space-y-6">
-          
-          {/* Logo y Encabezado */}
-          <div className="text-center space-y-2">
-            <img 
-              src={logoImg} 
-              alt={studioData.name} 
-              className="w-14 h-14 object-contain rounded-full border border-[#d4af37]/60 p-1 bg-black/70 mx-auto shadow-lg"
-            />
-            <div>
-              <span className="text-[9px] uppercase tracking-[0.3em] text-[#d4af37] font-bold block">
-                ADMINISTRACIÓN
-              </span>
-              <h2 className="text-xl font-serif font-bold text-white tracking-tight">
-                Acceso al Panel
-              </h2>
-            </div>
-            <p className="text-xs text-gray-400">
-              Ingresa tus credenciales autorizadas de {studioData.name}.
-            </p>
-          </div>
-
-          {/* Formulario de Login */}
-          <form onSubmit={handleAdminLogin} className="space-y-3.5">
-            {loginError && (
-              <div className="bg-red-500/10 border border-red-500/40 text-red-400 p-3 rounded-xl text-xs flex items-center gap-2 animate-fadeIn">
-                <AlertCircle size={15} className="shrink-0" />
-                <span>{loginError}</span>
-              </div>
-            )}
-
-            <div>
-              <label className="block text-[10px] uppercase font-bold text-gray-400 mb-1 flex items-center gap-1">
-                <Mail size={11} className="text-[#d4af37]" />
-                <span>Correo Electrónico</span>
-              </label>
-              <input
-                type="email"
-                required
-                placeholder="admin@barberia.com"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
-                className="w-full bg-[#181818] border border-[#2b2b2b] rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-[#d4af37] transition-colors"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] uppercase font-bold text-gray-400 mb-1 flex items-center gap-1">
-                <Lock size={11} className="text-[#d4af37]" />
-                <span>Contraseña</span>
-              </label>
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  placeholder="Tu contraseña de admin"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  className="w-full bg-[#181818] border border-[#2b2b2b] rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-[#d4af37] transition-colors"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
-                >
-                  {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loggingIn}
-              className="w-full bg-[#d4af37] hover:bg-[#c49f2e] text-black font-bold py-3 rounded-xl text-xs uppercase tracking-wider transition-all shadow-xl shadow-[#d4af37]/20 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 mt-2"
-            >
-              {loggingIn ? (
-                <>
-                  <Loader2 className="animate-spin" size={15} />
-                  <span>Verificando...</span>
-                </>
-              ) : (
-                <>
-                  <ShieldCheck size={15} />
-                  <span>Ingresar al Panel</span>
-                </>
-              )}
-            </button>
-          </form>
-
-          {/* Enlace para volver a la Web */}
-          <div className="text-center pt-2 border-t border-[#222222]">
-            <a 
-              href="/" 
-              className="text-xs text-gray-400 hover:text-white flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <ArrowLeft size={13} />
-              <span>Volver a la Web Principal</span>
-            </a>
-          </div>
-
-        </div>
-      </div>
+      <AdminLogin 
+        onLogin={handleAdminLogin}
+        loggingIn={loggingIn}
+        loginError={loginError}
+      />
     );
   }
 
-  // =========================================================================
-  // VISTA 2: PANEL DE CONTROL COMPLETO (USUARIO AUTENTICADO)
-  // =========================================================================
   return (
-    <div className="min-h-screen bg-[#080808] text-white font-sans selection:bg-[#d4af37] selection:text-black">
+    <div className="min-h-screen bg-[#080808] text-white font-sans selection:bg-[#d4af37] selection:text-black flex flex-col">
       
-      {/* 1. Header con Logo, Navegación y Botón de Cerrar Sesión */}
-      <header className="border-b border-[#222222] bg-[#101010]/95 backdrop-blur-md sticky top-0 z-40 px-4 sm:px-8 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
-        <div className="flex items-center gap-3">
-          <a 
-            href="/" 
-            className="flex items-center gap-2.5 group"
-            title="Ir a la Web Pública"
-          >
-            <img 
-              src={logoImg} 
-              alt={studioData.name} 
-              className="w-9 h-9 object-contain rounded-full border border-[#d4af37]/60 p-0.5 bg-black/60 group-hover:scale-105 transition-transform"
-            />
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-xs sm:text-sm tracking-wider uppercase text-white">
-                  {studioData.name}
-                </span>
-                <span className="text-[9px] bg-[#d4af37] text-black font-extrabold px-1.5 py-0.2 rounded uppercase">
-                  Admin
-                </span>
-              </div>
-              <span className="text-[10px] text-gray-400 flex items-center gap-1 group-hover:text-[#d4af37] transition-colors">
-                <Eye size={10} />
-                <span>Ver sitio web</span>
-              </span>
+      <AdminHeader 
+        isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
+        onLogout={handleAdminLogout}
+      />
+
+      <div className="flex-1 flex overflow-hidden">
+        
+        <AdminSidebar 
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          isMobileMenuOpen={isMobileMenuOpen}
+          setIsMobileMenuOpen={setIsMobileMenuOpen}
+          badges={badges}
+          totalFacturadoDia={totalFacturadoHoy}
+          cortesCompletadosCount={totalCortesHoyCount}
+        />
+
+        <main className="flex-1 overflow-y-auto p-4 sm:p-8 bg-[#080808]">
+          {loading ? (
+            <div className="py-24 flex flex-col items-center justify-center text-gray-400 gap-3">
+              <Loader2 className="animate-spin text-[#d4af37]" size={32} />
+              <p className="text-xs">Sincronizando con la base de datos...</p>
             </div>
-          </a>
-        </div>
-
-        {/* Pestañas del Panel */}
-        <div className="flex bg-[#161616] p-1 rounded-xl border border-[#282828] max-w-full overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('citas')}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-              activeTab === 'citas' ? 'bg-[#d4af37] text-black shadow-md' : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <Calendar size={13} />
-            <span>Agenda de Citas</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('servicios')}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-              activeTab === 'servicios' ? 'bg-[#d4af37] text-black shadow-md' : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <Scissors size={13} />
-            <span>Servicios & Precios</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('barberos')}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-              activeTab === 'barberos' ? 'bg-[#d4af37] text-black shadow-md' : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <Users size={13} />
-            <span>Barberos</span>
-          </button>
-        </div>
-
-        {/* Botón de Cerrar Sesión */}
-        <button
-          onClick={handleAdminLogout}
-          className="flex items-center gap-1.5 bg-[#1b1b1b] hover:bg-[#282828] text-gray-300 hover:text-red-400 border border-[#2d2d2d] hover:border-red-500/40 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all"
-          title="Cerrar Sesión de Administrador"
-        >
-          <LogOut size={13} />
-          <span className="hidden sm:inline">Cerrar Sesión</span>
-        </button>
-      </header>
-
-      {/* Contenido Principal */}
-      <main className="max-w-7xl mx-auto p-4 sm:p-8">
-        {loading ? (
-          <div className="py-24 flex flex-col items-center justify-center text-gray-400 gap-3">
-            <Loader2 className="animate-spin text-[#d4af37]" size={32} />
-            <p className="text-xs">Sincronizando con la base de datos...</p>
-          </div>
-        ) : (
-          <div>
-            
-            {/* TAB 1: AGENDA DE CITAS EN VIVO */}
-            {activeTab === 'citas' && (
-              <div className="space-y-5 animate-fadeIn">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#131313] border border-[#242424] p-4 rounded-2xl">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div>
-                      <label className="block text-[9px] uppercase font-bold text-gray-400 mb-1">Fecha</label>
-                      <input 
-                        type="date"
-                        value={filterDate}
-                        onChange={(e) => setFilterDate(e.target.value)}
-                        className="bg-[#1b1b1b] border border-[#303030] text-white text-xs px-3 py-1.5 rounded-xl focus:border-[#d4af37] focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[9px] uppercase font-bold text-gray-400 mb-1">Barbero</label>
-                      <select
-                        value={filterBarber}
-                        onChange={(e) => setFilterBarber(e.target.value)}
-                        className="bg-[#1b1b1b] border border-[#303030] text-white text-xs px-3 py-1.5 rounded-xl focus:border-[#d4af37] focus:outline-none"
-                      >
-                        <option value="all">Todos los barberos</option>
-                        {barberos.map(b => (
-                          <option key={b.id} value={b.id}>{b.nombre}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={fetchCitas}
-                    className="flex items-center gap-1.5 bg-[#1b1b1b] border border-[#303030] hover:border-[#d4af37] text-gray-300 hover:text-white px-3 py-2 rounded-xl text-xs font-semibold transition-all"
-                  >
-                    <RefreshCw size={13} />
-                    <span>Actualizar</span>
-                  </button>
-                </div>
-
-                {citas.length === 0 ? (
-                  <div className="bg-[#131313] border border-[#242424] rounded-3xl p-12 text-center text-gray-400 space-y-2">
-                    <Calendar size={36} className="mx-auto text-gray-600 mb-2" />
-                    <p className="text-sm font-bold text-white">No hay citas agendadas para esta fecha</p>
-                    <p className="text-xs text-gray-500">Los turnos que reserven los clientes aparecerán aquí automáticamente.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                    {citas.map((cita) => {
-                      const startDate = new Date(cita.fecha_hora_inicio);
-                      const timeStr = `${String(startDate.getHours()).padStart(2, '0')}:${String(startDate.getMinutes()).padStart(2, '0')}`;
-                      
-                      const cleanPhone = (cita.cliente_telefono || '').replace(/\D/g, '');
-                      const waNumber = cleanPhone.startsWith('0') ? `598${cleanPhone.slice(1)}` : `598${cleanPhone}`;
-                      const waUrl = `https://wa.me/${waNumber}?text=${encodeURIComponent(`Hola ${cita.cliente_nombre}! Te escribimos de ${studioData.name} para confirmar tu turno de hoy a las ${timeStr} hs.`)}`;
-
-                      const statusColors = {
-                        pendiente: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-                        confirmada: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
-                        completada: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-                        cancelada: 'bg-red-500/10 text-red-400 border-red-500/30 line-through'
-                      };
-
-                      return (
-                        <div 
-                          key={cita.id}
-                          className="bg-[#131313] border border-[#242424] rounded-2xl p-4 space-y-3 hover:border-[#d4af37]/40 transition-all shadow-lg"
-                        >
-                          <div className="flex justify-between items-start">
-                            <div className="flex items-center gap-2.5">
-                              <span className="text-base sm:text-lg font-serif font-bold text-[#d4af37] bg-[#1d190d] px-2.5 py-1 rounded-xl border border-[#d4af37]/30">
-                                {timeStr} hs
-                              </span>
-                              <div>
-                                <h3 className="text-sm font-bold text-white leading-tight">{cita.cliente_nombre}</h3>
-                                <p className="text-[11px] text-gray-400">{cita.cliente_telefono}</p>
-                              </div>
-                            </div>
-
-                            <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full border ${statusColors[cita.estado] || statusColors.pendiente}`}>
-                              {cita.estado}
-                            </span>
-                          </div>
-
-                          <div className="bg-[#1a1a1a] p-2.5 rounded-xl border border-[#282828] text-xs space-y-1">
-                            <div className="flex justify-between text-gray-300">
-                              <span>Servicio:</span>
-                              <strong className="text-white">{cita.servicios?.nombre}</strong>
-                            </div>
-                            <div className="flex justify-between text-gray-300">
-                              <span>Barbero:</span>
-                              <strong className="text-[#d4af37]">{cita.barberos?.nombre}</strong>
-                            </div>
-                            {cita.notas && (
-                              <p className="text-[10px] text-gray-400 pt-1 border-t border-[#262626]">
-                                📝 {cita.notas}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="flex items-center justify-between pt-1 gap-2">
-                            <a
-                              href={waUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="flex items-center gap-1.5 bg-[#25D366]/15 hover:bg-[#25D366]/25 text-[#25D366] border border-[#25D366]/40 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all"
-                            >
-                              <MessageSquare size={13} />
-                              <span>WhatsApp</span>
-                            </a>
-
-                            <div className="flex items-center gap-1.5">
-                              {cita.estado !== 'completada' && cita.estado !== 'cancelada' && (
-                                <button
-                                  onClick={() => updateCitaStatus(cita.id, 'completada')}
-                                  title="Marcar como Atendido"
-                                  className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-xl transition-colors"
-                                >
-                                  <CheckCircle2 size={16} />
-                                </button>
-                              )}
-
-                              {cita.estado !== 'cancelada' && (
-                                <button
-                                  onClick={() => {
-                                    if (confirm('¿Deseas cancelar esta cita? El horario se liberará inmediatamente en la web.')) {
-                                      updateCitaStatus(cita.id, 'cancelada');
-                                    }
-                                  }}
-                                  title="Cancelar Cita"
-                                  className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl transition-colors"
-                                >
-                                  <XCircle size={16} />
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* TAB 2: GESTIÓN DE SERVICIOS */}
-            {activeTab === 'servicios' && (
-              <div className="space-y-5 animate-fadeIn">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h2 className="text-base font-bold text-white">Catálogo de Servicios</h2>
-                    <p className="text-xs text-gray-400">Los cambios que hagas aquí se actualizan inmediatamente en el formulario de la web.</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setEditingService(null);
-                      setServiceForm({ nombre: '', descripcion: '', duracion_minutos: 30, precio: '' });
-                      setShowServiceModal(true);
-                    }}
-                    className="flex items-center gap-1.5 bg-[#d4af37] text-black font-bold px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all"
-                  >
-                    <Plus size={14} />
-                    <span>Nuevo Servicio</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                  {servicios.map((srv) => (
-                    <div 
-                      key={srv.id}
-                      className={`bg-[#131313] border p-4 rounded-2xl space-y-3 transition-all ${
-                        srv.activo ? 'border-[#262626]' : 'border-red-500/30 opacity-60'
-                      }`}
-                    >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="text-sm font-bold text-white">{srv.nombre}</h3>
-                          <p className="text-xs text-gray-400">{srv.duracion_minutos} minutos</p>
-                        </div>
-                        <span className="text-base font-serif font-bold text-[#d4af37]">${srv.precio}</span>
-                      </div>
-
-                      {srv.descripcion && (
-                        <p className="text-xs text-gray-400 leading-relaxed">{srv.descripcion}</p>
-                      )}
-
-                      <div className="flex justify-between items-center pt-2 border-t border-[#222222]">
-                        <button
-                          onClick={() => toggleServiceActive(srv)}
-                          className={`flex items-center gap-1.5 text-[10px] uppercase font-bold px-2.5 py-1 rounded-lg border transition-all ${
-                            srv.activo 
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
-                              : 'bg-gray-800 text-gray-400 border-gray-700'
-                          }`}
-                        >
-                          <Power size={11} />
-                          <span>{srv.activo ? 'Visible en Web' : 'Pausado'}</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setEditingService(srv);
-                            setServiceForm({
-                              nombre: srv.nombre,
-                              descripcion: srv.descripcion || '',
-                              duracion_minutos: srv.duracion_minutos,
-                              precio: srv.precio
-                            });
-                            setShowServiceModal(true);
-                          }}
-                          className="p-1.5 bg-[#1b1b1b] hover:bg-[#252525] text-gray-300 hover:text-white rounded-lg border border-[#2f2f2f] transition-colors"
-                          title="Editar Precio o Duración"
-                        >
-                          <Edit2 size={13} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* TAB 3: GESTIÓN DE BARBEROS */}
-            {activeTab === 'barberos' && (
-              <div className="space-y-5 animate-fadeIn">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h2 className="text-base font-bold text-white">Equipo de Barberos</h2>
-                    <p className="text-xs text-gray-400">Agrega o edita los barberos reales de tu local.</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setEditingBarber(null);
-                      setBarberForm({ nombre: '', telefono: '', email: '' });
-                      setShowBarberModal(true);
-                    }}
-                    className="flex items-center gap-1.5 bg-[#d4af37] text-black font-bold px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all"
-                  >
-                    <Plus size={14} />
-                    <span>Agregar Barbero</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                  {barberos.map((b) => (
-                    <div 
-                      key={b.id}
-                      className={`bg-[#131313] border p-4 rounded-2xl space-y-3 transition-all ${
-                        b.activo ? 'border-[#262626]' : 'border-red-500/30 opacity-60'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-[#1e190d] border border-[#d4af37] text-[#d4af37] font-bold flex items-center justify-center text-sm">
-                          {b.nombre.charAt(0)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-sm font-bold text-white truncate">{b.nombre}</h3>
-                          <p className="text-xs text-gray-400">{b.telefono || 'Sin teléfono'}</p>
-                        </div>
-                      </div>
-
-                      <div className="bg-[#1a1a1a] p-2.5 rounded-xl border border-[#262626] text-[11px] text-gray-300">
-                        <span>Horario de atención: </span>
-                        <strong className="text-white">Lun a Sáb (10:00 a 20:00 hs)</strong>
-                      </div>
-
-                      <div className="flex justify-between items-center pt-2 border-t border-[#222222]">
-                        <button
-                          onClick={() => toggleBarberActive(b)}
-                          className={`flex items-center gap-1.5 text-[10px] uppercase font-bold px-2.5 py-1 rounded-lg border transition-all ${
-                            b.activo 
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
-                              : 'bg-gray-800 text-gray-400 border-gray-700'
-                          }`}
-                        >
-                          <Power size={11} />
-                          <span>{b.activo ? 'Disponible en Web' : 'No disponible'}</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setEditingBarber(b);
-                            setBarberForm({
-                              nombre: b.nombre,
-                              telefono: b.telefono || '',
-                              email: b.email || ''
-                            });
-                            setShowBarberModal(true);
-                          }}
-                          className="p-1.5 bg-[#1b1b1b] hover:bg-[#252525] text-gray-300 hover:text-white rounded-lg border border-[#2f2f2f] transition-colors"
-                          title="Editar Barbero"
-                        >
-                          <Edit2 size={13} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-          </div>
-        )}
-      </main>
-
-      {/* MODAL SERVICIO */}
-      {showServiceModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[#131313] border border-[#2a2a2a] w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-white">
-              {editingService ? 'Editar Servicio' : 'Nuevo Servicio'}
-            </h3>
-
-            <form onSubmit={handleSaveService} className="space-y-3 text-xs">
-              <div>
-                <label className="block text-gray-400 uppercase font-bold mb-1 text-[10px]">Nombre del Servicio *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ej: Corte Degradé + Barba"
-                  value={serviceForm.nombre}
-                  onChange={(e) => setServiceForm({ ...serviceForm, nombre: e.target.value })}
-                  className="w-full bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl px-3 py-2 text-white focus:border-[#d4af37] focus:outline-none"
+          ) : (
+            <>
+              {activeTab === 'citas' && (
+                <CitasTab 
+                  citas={citas}
+                  filterDate={filterDate}
+                  setFilterDate={setFilterDate}
+                  filterBarber={filterBarber}
+                  setFilterBarber={setFilterBarber}
+                  barberos={barberos}
+                  onRefresh={fetchCitas}
+                  onUpdateStatus={updateCitaStatus}
                 />
-              </div>
+              )}
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-gray-400 uppercase font-bold mb-1 text-[10px]">Precio ($) *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    placeholder="450"
-                    value={serviceForm.precio}
-                    onChange={(e) => setServiceForm({ ...serviceForm, precio: e.target.value })}
-                    className="w-full bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl px-3 py-2 text-white focus:border-[#d4af37] focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-gray-400 uppercase font-bold mb-1 text-[10px]">Duración (Minutos) *</label>
-                  <select
-                    value={serviceForm.duracion_minutos}
-                    onChange={(e) => setServiceForm({ ...serviceForm, duracion_minutos: e.target.value })}
-                    className="w-full bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl px-3 py-2 text-white focus:border-[#d4af37] focus:outline-none"
-                  >
-                    <option value={15}>15 min</option>
-                    <option value={30}>30 min</option>
-                    <option value={45}>45 min</option>
-                    <option value={60}>60 min (1 h)</option>
-                    <option value={90}>90 min (1.5 h)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-gray-400 uppercase font-bold mb-1 text-[10px]">Descripción</label>
-                <textarea
-                  placeholder="Detalle del servicio..."
-                  value={serviceForm.descripcion}
-                  onChange={(e) => setServiceForm({ ...serviceForm, descripcion: e.target.value })}
-                  rows={2}
-                  className="w-full bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl px-3 py-2 text-white focus:border-[#d4af37] focus:outline-none"
+              {activeTab === 'facturacion' && (
+                <FacturacionTab 
+                  citas={citas}
+                  manualCortes={manualCortes}
+                  barberos={barberos}
+                  onOpenManualModal={() => setShowManualCorteModal(true)}
                 />
-              </div>
+              )}
 
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowServiceModal(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-[#222222] text-gray-300 font-bold hover:bg-[#2a2a2a] transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-[#d4af37] text-black font-bold hover:bg-[#c49f2e] transition-colors shadow-md"
-                >
-                  Guardar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL BARBERO */}
-      {showBarberModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[#131313] border border-[#2a2a2a] w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-white">
-              {editingBarber ? 'Editar Barbero' : 'Agregar Barbero'}
-            </h3>
-
-            <form onSubmit={handleSaveBarber} className="space-y-3 text-xs">
-              <div>
-                <label className="block text-gray-400 uppercase font-bold mb-1 text-[10px]">Nombre Completo *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ej: Mateo Benítez"
-                  value={barberForm.nombre}
-                  onChange={(e) => setBarberForm({ ...barberForm, nombre: e.target.value })}
-                  className="w-full bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl px-3 py-2 text-white focus:border-[#d4af37] focus:outline-none"
+              {activeTab === 'stock' && (
+                <StockTab 
+                  inventario={inventario}
+                  onNewStock={() => {
+                    setEditingStock(null);
+                    setStockForm({ nombre: '', tipo: 'Venta', stock: 10, min_stock: 3, precio_costo: '', precio_venta: '' });
+                    setShowStockModal(true);
+                  }}
+                  onEditStock={(item) => {
+                    setEditingStock(item);
+                    setStockForm({
+                      nombre: item.nombre,
+                      tipo: item.tipo,
+                      stock: item.stock,
+                      min_stock: item.min_stock,
+                      precio_costo: item.precio_costo,
+                      precio_venta: item.precio_venta
+                    });
+                    setShowStockModal(true);
+                  }}
+                  onAdjustStock={adjustStockQty}
+                  onDeleteStock={handleDeleteStock}
                 />
-              </div>
+              )}
 
-              <div>
-                <label className="block text-gray-400 uppercase font-bold mb-1 text-[10px]">Teléfono (WhatsApp)</label>
-                <input
-                  type="tel"
-                  placeholder="099 123 456"
-                  value={barberForm.telefono}
-                  onChange={(e) => setBarberForm({ ...barberForm, telefono: e.target.value })}
-                  className="w-full bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl px-3 py-2 text-white focus:border-[#d4af37] focus:outline-none"
+              {activeTab === 'promociones' && (
+                <PromocionesTab 
+                  promociones={promociones}
+                  onNewPromo={() => {
+                    setEditingPromo(null);
+                    setPromoForm({ titulo: '', descuento: '', descripcion: '', codigo: '', activo: true });
+                    setShowPromoModal(true);
+                  }}
+                  onEditPromo={(promo) => {
+                    setEditingPromo(promo);
+                    setPromoForm({
+                      titulo: promo.titulo,
+                      descuento: promo.descuento,
+                      descripcion: promo.descripcion || '',
+                      codigo: promo.codigo || '',
+                      activo: promo.activo
+                    });
+                    setShowPromoModal(true);
+                  }}
+                  onToggleActive={togglePromoActive}
+                  onDeletePromo={handleDeletePromo}
                 />
-              </div>
+              )}
 
-              <div>
-                <label className="block text-gray-400 uppercase font-bold mb-1 text-[10px]">Email</label>
-                <input
-                  type="email"
-                  placeholder="mateo@barberia.com"
-                  value={barberForm.email}
-                  onChange={(e) => setBarberForm({ ...barberForm, email: e.target.value })}
-                  className="w-full bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl px-3 py-2 text-white focus:border-[#d4af37] focus:outline-none"
+              {activeTab === 'servicios' && (
+                <ServiciosTab 
+                  servicios={servicios}
+                  onNewService={() => {
+                    setEditingService(null);
+                    setServiceForm({ nombre: '', descripcion: '', duracion_minutos: 30, precio: '' });
+                    setShowServiceModal(true);
+                  }}
+                  onEditService={(srv) => {
+                    setEditingService(srv);
+                    setServiceForm({
+                      nombre: srv.nombre,
+                      descripcion: srv.descripcion || '',
+                      duracion_minutos: srv.duracion_minutos,
+                      precio: srv.precio
+                    });
+                    setShowServiceModal(true);
+                  }}
+                  onToggleActive={toggleServiceActive}
+                  onDeleteService={handleDeleteService}
                 />
-              </div>
+              )}
 
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowBarberModal(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-[#222222] text-gray-300 font-bold hover:bg-[#2a2a2a] transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-[#d4af37] text-black font-bold hover:bg-[#c49f2e] transition-colors shadow-md"
-                >
-                  Guardar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+              {activeTab === 'barberos' && (
+                <BarberosTab 
+                  barberos={barberos}
+                  asistencias={asistencias}
+                  onNewBarber={() => {
+                    setEditingBarber(null);
+                    setBarberForm({ nombre: '', telefono: '', email: '', hora_inicio: '10:00', hora_fin: '20:00' });
+                    setShowBarberModal(true);
+                  }}
+                  onEditBarber={(b) => {
+                    setEditingBarber(b);
+                    setBarberForm({
+                      nombre: b.nombre,
+                      telefono: b.telefono || '',
+                      email: b.email || '',
+                      hora_inicio: b.hora_inicio ? b.hora_inicio.slice(0, 5) : '10:00',
+                      hora_fin: b.hora_fin ? b.hora_fin.slice(0, 5) : '20:00'
+                    });
+                    setShowBarberModal(true);
+                  }}
+                  onToggleActive={toggleBarberActive}
+                  onDeleteBarber={handleDeleteBarber}
+                  onUpdateAsistencia={handleUpdateAsistencia}
+                />
+              )}
+            </>
+          )}
+        </main>
+      </div>
+
+      {/* Modales */}
+      <ServiceModal 
+        isOpen={showServiceModal}
+        onClose={() => setShowServiceModal(false)}
+        onSave={handleSaveService}
+        editingService={editingService}
+        serviceForm={serviceForm}
+        setServiceForm={setServiceForm}
+      />
+
+      <BarberModal 
+        isOpen={showBarberModal}
+        onClose={() => setShowBarberModal(false)}
+        onSave={handleSaveBarber}
+        editingBarber={editingBarber}
+        barberForm={barberForm}
+        setBarberForm={setBarberForm}
+      />
+
+      <StockModal 
+        isOpen={showStockModal}
+        onClose={() => setShowStockModal(false)}
+        onSave={handleSaveStock}
+        editingStock={editingStock}
+        stockForm={stockForm}
+        setStockForm={setStockForm}
+      />
+
+      <PromoModal 
+        isOpen={showPromoModal}
+        onClose={() => setShowPromoModal(false)}
+        onSave={handleSavePromo}
+        editingPromo={editingPromo}
+        promoForm={promoForm}
+        setPromoForm={setPromoForm}
+      />
+
+      <ManualCorteModal 
+        isOpen={showManualCorteModal}
+        onClose={() => setShowManualCorteModal(false)}
+        onSave={handleSaveManualCorte}
+        barberos={barberos}
+        servicios={servicios}
+      />
 
     </div>
   );

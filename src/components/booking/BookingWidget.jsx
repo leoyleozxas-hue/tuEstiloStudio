@@ -38,7 +38,7 @@ const getNextDays = () => {
 // Horarios base de la barbería
 const defaultTimeSlots = {
   mañana: ["10:00", "10:30", "11:00", "11:30", "12:00", "12:30"],
-  tarde: ["14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30"],
+  tarde: ["13:00", "13:30", "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30"],
   noche: ["18:00", "18:30", "19:00", "19:30"]
 };
 
@@ -108,14 +108,14 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
     if (forcedSocioMode) setSocioMode(forcedSocioMode);
   }, [forcedSocioMode]);
 
-  // 1. Cargar Servicios y Barberos de Supabase
+  // 1. Cargar Servicios y Barberos (con sus horarios de atención)
   useEffect(() => {
     async function fetchData() {
       try {
         setLoadingData(true);
         const [servicesRes, barbersRes] = await Promise.all([
           supabase.from('servicios').select('*').eq('activo', true).order('precio', { ascending: true }),
-          supabase.from('barberos').select('*').eq('activo', true).order('nombre', { ascending: true })
+          supabase.from('barberos').select('*, horarios_trabajo(hora_inicio, hora_fin, dia_semana, activo)').eq('activo', true).order('nombre', { ascending: true })
         ]);
 
         if (servicesRes.data && servicesRes.data.length > 0) {
@@ -126,7 +126,16 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
         }
 
         if (barbersRes.data && barbersRes.data.length > 0) {
-          setBarbers(barbersRes.data);
+          const parsedBarbers = barbersRes.data.map(b => {
+            const horarioBase = Array.isArray(b.horarios_trabajo) ? b.horarios_trabajo[0] : null;
+            return {
+              ...b,
+              hora_inicio: b.hora_inicio || horarioBase?.hora_inicio || '10:00:00',
+              hora_fin: b.hora_fin || horarioBase?.hora_fin || '20:00:00',
+              horarios_trabajo: b.horarios_trabajo || []
+            };
+          });
+          setBarbers(parsedBarbers);
           setBarberId(preselectedBarberId || 'any');
           if (preselectedBarberId) setCurrentStep(3);
         }
@@ -184,26 +193,59 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
   const currentSelectedBarber = barbers.find(b => b.id === barberId);
   const durationMinutes = currentService.duracion_minutos || 30;
   const now = new Date();
-  const maxClosingTime = new Date(`${selectedDate.dateStr}T20:00:00`);
 
+  // Función para validar si el barbero está dentro de su horario de trabajo
+  const isBarberWorkingAt = (b, slotStart, slotEnd, dayOfWeek) => {
+    if (!b) return false;
+
+    // 1. Revisar tabla de horarios específicos por día si existe
+    if (b.horarios_trabajo && b.horarios_trabajo.length > 0) {
+      const horarioDia = b.horarios_trabajo.find(h => h.dia_semana === dayOfWeek && h.activo !== false);
+      if (horarioDia) {
+        const iniStr = (horarioDia.hora_inicio || '10:00').slice(0, 5);
+        const finStr = (horarioDia.hora_fin || '20:00').slice(0, 5);
+        const slotStartStr = `${String(slotStart.getHours()).padStart(2, '0')}:${String(slotStart.getMinutes()).padStart(2, '0')}`;
+        const slotEndStr = `${String(slotEnd.getHours()).padStart(2, '0')}:${String(slotEnd.getMinutes()).padStart(2, '0')}`;
+        return slotStartStr >= iniStr && slotEndStr <= finStr;
+      }
+    }
+
+    // 2. Fallback a hora_inicio y hora_fin del barbero
+    const ini = (b.hora_inicio || '10:00:00').slice(0, 5);
+    const fin = (b.hora_fin || '20:00:00').slice(0, 5);
+    const slotStartStr = `${String(slotStart.getHours()).padStart(2, '0')}:${String(slotStart.getMinutes()).padStart(2, '0')}`;
+    const slotEndStr = `${String(slotEnd.getHours()).padStart(2, '0')}:${String(slotEnd.getMinutes()).padStart(2, '0')}`;
+
+    return slotStartStr >= ini && slotEndStr <= fin;
+  };
+
+  // Función para validar si el barbero no tiene otra cita solapada
   const isBarberFreeAt = (bId, slotStart, slotEnd) => {
     return !existingBookings.some(cita => {
       return cita.barbero_id === bId && slotStart < cita.end && slotEnd > cita.start;
     });
   };
 
-  // 3. Filtrar horarios disponibles
+  // 3. Filtrar horarios disponibles (valida horario laboral del barbero + no solapamiento)
   const availableSlotsInTurno = (defaultTimeSlots[activeTurno] || []).filter(slot => {
     const slotStart = new Date(`${selectedDate.dateStr}T${slot}:00`);
     const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60000);
 
+    // Descartar horas que ya pasaron hoy
     if (slotStart <= now) return false;
-    if (slotEnd > maxClosingTime) return false;
 
     if (barberId === 'any') {
-      return barbers.some(b => isBarberFreeAt(b.id, slotStart, slotEnd));
+      // Disponible si al menos 1 barbero está en su turno de trabajo Y no tiene cita
+      return barbers.some(b => 
+        isBarberWorkingAt(b, slotStart, slotEnd, selectedDate.dayOfWeek) && 
+        isBarberFreeAt(b.id, slotStart, slotEnd)
+      );
     } else {
-      return isBarberFreeAt(barberId, slotStart, slotEnd);
+      // Si eligió barbero específico: debe estar dentro de su horario de atención Y libre
+      return (
+        isBarberWorkingAt(currentSelectedBarber, slotStart, slotEnd, selectedDate.dayOfWeek) && 
+        isBarberFreeAt(barberId, slotStart, slotEnd)
+      );
     }
   });
 
@@ -238,7 +280,10 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
 
       let targetBarber = null;
       if (barberId === 'any') {
-        targetBarber = barbers.find(b => isBarberFreeAt(b.id, startDateTime, endDateTime));
+        targetBarber = barbers.find(b => 
+          isBarberWorkingAt(b, startDateTime, endDateTime, selectedDate.dayOfWeek) && 
+          isBarberFreeAt(b.id, startDateTime, endDateTime)
+        );
         if (!targetBarber) {
           alert('¡Ese horario acaba de ser ocupado! Por favor selecciona otro.');
           setCurrentStep(3);
@@ -388,13 +433,11 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 items-start">
           
-          {/* ========================================================================= */}
-          {/* COLUMNA FORMULARIO (order-1 en mobile, order-2 en desktop) */}
-          {/* ========================================================================= */}
+          {/* COLUMNA FORMULARIO */}
           <div className="order-1 lg:order-2 lg:col-span-7">
             <div className="bg-[#121212] border border-[#222222] rounded-3xl p-5 sm:p-7 shadow-2xl relative min-h-[360px] flex flex-col justify-between">
               
-              {/* TAB 1: RESERVA PASO A PASO COMPACTA */}
+              {/* TAB 1: RESERVA PASO A PASO */}
               {mainTab === 'reserva' && (
                 <div className="w-full">
                   {bookingConfirmed ? (
@@ -461,9 +504,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                   ) : (
                     <div>
                       
-                      {/* ======================================================== */}
                       {/* PASO 1: SELECCIONAR SERVICIO */}
-                      {/* ======================================================== */}
                       {currentStep === 1 && (
                         <div className="space-y-3 animate-fadeIn">
                           <div className="flex justify-between items-center pb-2 border-b border-[#222222]">
@@ -481,7 +522,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                                 type="button"
                                 onClick={() => {
                                   setServiceId(srv.id);
-                                  setCurrentStep(2); // Avanza fluidamente al paso 2
+                                  setCurrentStep(2);
                                 }}
                                 className={`p-3 rounded-2xl border text-left flex items-center justify-between transition-all active:scale-[0.98] ${
                                   serviceId === srv.id
@@ -505,9 +546,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                         </div>
                       )}
 
-                      {/* ======================================================== */}
                       {/* PASO 2: SELECCIONAR BARBERO */}
-                      {/* ======================================================== */}
                       {currentStep === 2 && (
                         <div className="space-y-3 animate-fadeIn">
                           <div className="flex justify-between items-center pb-2 border-b border-[#222222]">
@@ -534,7 +573,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                               type="button"
                               onClick={() => {
                                 setBarberId('any');
-                                setCurrentStep(3); // Avanza al paso 3
+                                setCurrentStep(3);
                               }}
                               className={`p-3.5 rounded-2xl border text-center transition-all active:scale-[0.98] ${
                                 barberId === 'any'
@@ -555,7 +594,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                                 type="button"
                                 onClick={() => {
                                   setBarberId(b.id);
-                                  setCurrentStep(3); // Avanza al paso 3
+                                  setCurrentStep(3);
                                 }}
                                 className={`p-3.5 rounded-2xl border text-center transition-all active:scale-[0.98] ${
                                   barberId === b.id
@@ -564,19 +603,21 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                                 }`}
                               >
                                 <div className="w-7 h-7 rounded-full bg-[#242424] text-[#d4af37] font-bold text-xs flex items-center justify-center mx-auto mb-1">
-                                  {b.nombre.charAt(0)}
+                                  {b.nombre ? b.nombre.charAt(0) : 'B'}
                                 </div>
                                 <p className="text-xs font-bold text-white truncate">{b.nombre}</p>
-                                <p className="text-[9px] text-gray-400">Especialista</p>
+                                <p className="text-[9px] text-gray-400">
+                                  {b.hora_inicio && b.hora_fin 
+                                    ? `${b.hora_inicio.slice(0, 5)} a ${b.hora_fin.slice(0, 5)}`
+                                    : 'Especialista'}
+                                </p>
                               </button>
                             ))}
                           </div>
                         </div>
                       )}
 
-                      {/* ======================================================== */}
                       {/* PASO 3: SELECCIONAR FECHA Y HORARIO */}
-                      {/* ======================================================== */}
                       {currentStep === 3 && (
                         <div className="space-y-3 animate-fadeIn">
                           <div className="flex justify-between items-center pb-2 border-b border-[#222222]">
@@ -654,7 +695,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                                       type="button"
                                       onClick={() => {
                                         setSelectedTime(slot);
-                                        setCurrentStep(4); // Avanza automáticamente al paso 4
+                                        setCurrentStep(4);
                                       }}
                                       className={`py-2 rounded-xl text-xs font-bold border transition-all active:scale-95 ${
                                         isSelected
@@ -670,16 +711,14 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                             ) : (
                               <div className="bg-[#171717] border border-[#262626] rounded-xl p-3 text-center text-xs text-gray-400 flex items-center justify-center gap-2">
                                 <AlertCircle size={14} className="text-[#d4af37]" />
-                                <span>No hay cupos en este turno para {durationMinutes} min.</span>
+                                <span>No hay turnos disponibles para el profesional seleccionado en este horario.</span>
                               </div>
                             )}
                           </div>
                         </div>
                       )}
 
-                      {/* ======================================================== */}
                       {/* PASO 4: DATOS DEL CLIENTE & CONFIRMACIÓN */}
-                      {/* ======================================================== */}
                       {currentStep === 4 && (
                         <form onSubmit={handleBookingSubmit} className="space-y-3 animate-fadeIn">
                           <div className="flex justify-between items-center pb-2 border-b border-[#222222]">
@@ -799,7 +838,6 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
               {mainTab === 'socios' && (
                 <div className="space-y-4 animate-fadeIn">
                   
-                  {/* Selector Registro vs Login */}
                   <div className="flex bg-[#181818] p-1 rounded-xl border border-[#282828] mb-3">
                     <button
                       type="button"
@@ -828,7 +866,6 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                     </button>
                   </div>
 
-                  {/* Formulario Registro */}
                   {socioMode === 'registro' && !socioRegistered && (
                     <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
                       <div>
@@ -898,7 +935,6 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                         </div>
                       </div>
 
-                      {/* Membresía VIP */}
                       <div 
                         onClick={() => setIsVip(!isVip)}
                         className={`p-3.5 rounded-2xl border transition-all cursor-pointer select-none flex items-start gap-3 ${
@@ -939,7 +975,6 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                     </form>
                   )}
 
-                  {/* Confirmación Registro */}
                   {socioMode === 'registro' && socioRegistered && (
                     <div className="text-center py-5 space-y-3 animate-fadeIn">
                       <div className="w-12 h-12 rounded-full bg-[#d4af37]/20 border border-[#d4af37] flex items-center justify-center mx-auto text-[#d4af37]">
@@ -981,7 +1016,6 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                     </div>
                   )}
 
-                  {/* Formulario Login */}
                   {socioMode === 'login' && !activeUser && (
                     <form onSubmit={handleLoginSubmit} className="space-y-3.5">
                       <div>
@@ -1033,7 +1067,6 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                     </form>
                   )}
 
-                  {/* Sesión Iniciada */}
                   {socioMode === 'login' && activeUser && (
                     <div className="bg-[#181818] border border-[#d4af37]/40 rounded-2xl p-4 text-center space-y-3 animate-fadeIn">
                       <div className="w-10 h-10 rounded-full bg-[#d4af37]/20 border border-[#d4af37] flex items-center justify-center mx-auto text-[#d4af37]">
@@ -1090,9 +1123,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
             </div>
           </div>
 
-          {/* ========================================================================= */}
-          {/* COLUMNA INFORMACIÓN COMPLETA (order-2 en mobile, order-1 en desktop) */}
-          {/* ========================================================================= */}
+          {/* COLUMNA INFORMACIÓN */}
           <div className="order-2 lg:order-1 lg:col-span-5 space-y-4">
             {mainTab === 'reserva' && (
               <div className="space-y-4 animate-fadeIn">
@@ -1120,7 +1151,7 @@ export default function BookingWidget({ preselectedServiceId, preselectedBarberI
                       </div>
                       <div>
                         <strong className="text-white block">Sincronización en Tiempo Real</strong>
-                        <span className="text-gray-400">Los horarios ocupados se ocultan automáticamente.</span>
+                        <span className="text-gray-400">Los horarios ocupados o fuera de turno se ocultan automáticamente.</span>
                       </div>
                     </div>
                     <div className="flex items-start gap-3 text-xs text-gray-300">
