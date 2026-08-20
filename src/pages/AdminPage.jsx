@@ -11,6 +11,7 @@ import { AdminSidebar } from '../components/admin/layout/AdminSidebar';
 // Pestañas
 import { CitasTab } from '../components/admin/tabs/CitasTab';
 import { FacturacionTab } from '../components/admin/tabs/FacturacionTab';
+import { SociosTab } from '../components/admin/tabs/SociosTab';
 import { StockTab } from '../components/admin/tabs/StockTab';
 import { PromocionesTab } from '../components/admin/tabs/PromocionesTab';
 import { ServiciosTab } from '../components/admin/tabs/ServiciosTab';
@@ -19,9 +20,12 @@ import { BarberosTab } from '../components/admin/tabs/BarberosTab';
 // Modales
 import { ServiceModal } from '../components/admin/modals/ServiceModal';
 import { BarberModal } from '../components/admin/modals/BarberModal';
+import { SocioModal } from '../components/admin/modals/SocioModal';
 import { StockModal } from '../components/admin/modals/StockModal';
 import { PromoModal } from '../components/admin/modals/PromoModal';
 import { ManualCorteModal } from '../components/admin/modals/ManualCorteModal';
+import { AsistenciaModal } from '../components/admin/modals/AsistenciaModal';
+import { ConfirmDeleteVentaModal } from '../components/admin/modals/ConfirmDeleteVentaModal';
 
 export default function AdminPage() {
   const [session, setSession] = useState(null);
@@ -36,7 +40,8 @@ export default function AdminPage() {
   const [citas, setCitas] = useState([]);
   const [servicios, setServicios] = useState([]);
   const [barberos, setBarberos] = useState([]);
-  const [asistencias, setAsistencias] = useState({});
+  const [socios, setSocios] = useState([]);
+  const [asistenciasList, setAsistenciasList] = useState([]);
   const [inventario, setInventario] = useState([]);
   const [promociones, setPromociones] = useState([]);
   const [manualCortes, setManualCortes] = useState([]);
@@ -46,11 +51,41 @@ export default function AdminPage() {
 
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [editingService, setEditingService] = useState(null);
-  const [serviceForm, setServiceForm] = useState({ nombre: '', descripcion: '', duracion_minutos: 30, precio: '' });
+  const [serviceForm, setServiceForm] = useState({ 
+    nombre: '', 
+    precio: '', 
+    duracion_minutos: 30, 
+    descripcion: '', 
+    badge: '', 
+    image_url: '', 
+    features: [] 
+  });
 
   const [showBarberModal, setShowBarberModal] = useState(false);
   const [editingBarber, setEditingBarber] = useState(null);
-  const [barberForm, setBarberForm] = useState({ nombre: '', telefono: '', email: '', hora_inicio: '10:00', hora_fin: '20:00' });
+  const [barberForm, setBarberForm] = useState({ 
+    nombre: '', 
+    telefono: '', 
+    email: '', 
+    avatar_url: '', 
+    descripcion: '', 
+    hora_inicio: '10:00', 
+    hora_fin: '20:00' 
+  });
+
+  const [showSocioModal, setShowSocioModal] = useState(false);
+  const [editingSocio, setEditingSocio] = useState(null);
+  const [socioForm, setSocioForm] = useState({
+    nombre: '',
+    telefono: '',
+    email: '',
+    instagram: '',
+    facebook: '',
+    es_vip: true,
+    puntos: 100,
+    fecha_inicio_vip: new Date().toISOString().split('T')[0],
+    fecha_vencimiento_vip: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  });
 
   const [showStockModal, setShowStockModal] = useState(false);
   const [editingStock, setEditingStock] = useState(null);
@@ -61,6 +96,10 @@ export default function AdminPage() {
   const [promoForm, setPromoForm] = useState({ titulo: '', descuento: '', descripcion: '', codigo: '', activo: true });
 
   const [showManualCorteModal, setShowManualCorteModal] = useState(false);
+  const [showAsistenciaModal, setShowAsistenciaModal] = useState(false);
+
+  const [showDeleteVentaModal, setShowDeleteVentaModal] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState(null);
 
   // Autenticación
   useEffect(() => {
@@ -108,15 +147,15 @@ export default function AdminPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const hoyStr = new Date().toISOString().split('T')[0];
 
-      const [srvRes, brbRes, invRes, prmRes, manRes, asisRes] = await Promise.all([
+      const [srvRes, brbRes, socRes, invRes, prmRes, manRes, asisRes] = await Promise.all([
         supabase.from('servicios').select('*').order('precio', { ascending: true }),
         supabase.from('barberos').select('*, horarios_trabajo(hora_inicio, hora_fin)').order('nombre', { ascending: true }),
+        supabase.from('socios').select('*').order('created_at', { ascending: false }).then(r => r).catch(() => ({ data: null })),
         supabase.from('inventario').select('*').order('nombre', { ascending: true }).then(r => r).catch(() => ({ data: null })),
         supabase.from('promociones').select('*').order('created_at', { ascending: false }).then(r => r).catch(() => ({ data: null })),
         supabase.from('cortes_manuales').select('*').order('created_at', { ascending: false }).then(r => r).catch(() => ({ data: null })),
-        supabase.from('asistencias_barberos').select('*').eq('fecha', hoyStr).then(r => r).catch(() => ({ data: null }))
+        supabase.from('asistencias_barberos').select('*').order('fecha', { ascending: false }).then(r => r).catch(() => ({ data: null }))
       ]);
 
       if (srvRes.data) setServicios(srvRes.data);
@@ -133,14 +172,8 @@ export default function AdminPage() {
         setBarberos(barberosConHorarios);
       }
 
-      if (asisRes && asisRes.data) {
-        const mapAsis = {};
-        asisRes.data.forEach(a => {
-          mapAsis[a.barbero_id] = a.estado;
-        });
-        setAsistencias(mapAsis);
-      }
-
+      if (socRes && socRes.data) setSocios(socRes.data);
+      if (asisRes && asisRes.data) setAsistenciasList(asisRes.data);
       if (invRes && invRes.data && invRes.data.length > 0) setInventario(invRes.data);
       if (prmRes && prmRes.data && prmRes.data.length > 0) setPromociones(prmRes.data);
       if (manRes && manRes.data && manRes.data.length > 0) setManualCortes(manRes.data);
@@ -169,6 +202,8 @@ export default function AdminPage() {
           cliente_telefono,
           notas,
           estado,
+          metodo_pago,
+          propina,
           barbero_id,
           servicio_id,
           barberos (nombre),
@@ -202,6 +237,7 @@ export default function AdminPage() {
     }
   }, [filterDate, filterBarber]);
 
+  // Transición de estados en agenda
   const updateCitaStatus = async (citaId, nuevoEstado) => {
     try {
       const { error } = await supabase
@@ -210,13 +246,292 @@ export default function AdminPage() {
         .eq('id', citaId);
 
       if (error) throw error;
-      fetchCitas();
+      await fetchCitas();
     } catch (err) {
       alert(`Error al actualizar estado: ${err.message}`);
     }
   };
 
-  // Guardar barbero y sus horarios
+  // Completar cita con cobro
+  const handleCompletarCitaWithCobro = async (citaId, cobroData) => {
+    try {
+      const { error } = await supabase
+        .from('citas')
+        .update({
+          estado: 'completada',
+          metodo_pago: cobroData.metodo_pago || 'Efectivo',
+          propina: cobroData.propina || 0
+        })
+        .eq('id', citaId);
+
+      if (error) throw error;
+      await fetchData();
+    } catch (err) {
+      alert(`Error al completar turno: ${err.message}`);
+    }
+  };
+
+  // Anulación Segura de Venta / Cobro
+  const handleConfirmDeleteVenta = async (item) => {
+    try {
+      if (item.isCita) {
+        const { error } = await supabase
+          .from('citas')
+          .update({ estado: 'cancelada' })
+          .eq('id', item.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('cortes_manuales')
+          .delete()
+          .eq('id', item.id);
+        if (error) throw error;
+      }
+
+      await fetchData();
+    } catch (err) {
+      alert(`Error al anular venta: ${err.message}`);
+    }
+  };
+
+  // APROBAR SOLICITUD VIP (+Cobro de Cuota $990 en Caja)
+  const handleApproveSocio = async (socio) => {
+    const cuotaMonto = 990;
+    try {
+      const hoy = new Date();
+      const nuevaFechaVencimiento = new Date(hoy.setDate(hoy.getDate() + 30)).toISOString().split('T')[0];
+
+      // 1. Actualizar socio a aprobado y activo
+      const { error: socErr } = await supabase
+        .from('socios')
+        .update({
+          es_vip: true,
+          estado_solicitud: 'aprobado',
+          activo: true,
+          fecha_inicio_vip: new Date().toISOString().split('T')[0],
+          fecha_vencimiento_vip: nuevaFechaVencimiento
+        })
+        .eq('id', socio.id);
+
+      if (socErr) throw socErr;
+
+      // 2. Sumar cobro de cuota a caja
+      await supabase.from('cortes_manuales').insert([{
+        cliente_nombre: socio.nombre,
+        servicio_nombre: 'Cuota Membresía VIP (+30 días)',
+        monto: cuotaMonto,
+        propina: 0,
+        total: cuotaMonto,
+        metodo: 'Transferencia / Efectivo',
+        fecha: new Date().toISOString().split('T')[0],
+        hora: new Date().toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', hour12: false })
+      }]);
+
+      alert(`¡Membresía VIP de ${socio.nombre} aprobada y activada hasta ${nuevaFechaVencimiento}!`);
+      fetchData();
+    } catch (err) {
+      alert(`Error al aprobar socio: ${err.message}`);
+    }
+  };
+
+  const handleRejectSocio = async (socioId) => {
+    if (!confirm('¿Deseas rechazar esta solicitud de membresía VIP?')) return;
+    try {
+      const { error } = await supabase
+        .from('socios')
+        .update({ estado_solicitud: 'rechazado', es_vip: false })
+        .eq('id', socioId);
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    }
+  };
+
+  // Guardar / Editar Socio
+  const handleSaveSocio = async (e) => {
+    e.preventDefault();
+    const socioPayload = {
+      nombre: socioForm.nombre,
+      telefono: socioForm.telefono,
+      email: socioForm.email || null,
+      instagram: socioForm.instagram ? socioForm.instagram.replace('@', '') : null,
+      facebook: socioForm.facebook || null,
+      es_vip: socioForm.es_vip,
+      estado_solicitud: socioForm.es_vip ? 'aprobado' : 'aprobado',
+      activo: true,
+      puntos: parseInt(socioForm.puntos) || 0,
+      fecha_inicio_vip: socioForm.es_vip ? (socioForm.fecha_inicio_vip || new Date().toISOString().split('T')[0]) : null,
+      fecha_vencimiento_vip: socioForm.es_vip ? (socioForm.fecha_vencimiento_vip || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]) : null
+    };
+
+    try {
+      if (editingSocio) {
+        const { error } = await supabase
+          .from('socios')
+          .update(socioPayload)
+          .eq('id', editingSocio.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('socios')
+          .insert([socioPayload]);
+        if (error) throw error;
+      }
+
+      setShowSocioModal(false);
+      setEditingSocio(null);
+      setSocioForm({
+        nombre: '',
+        telefono: '',
+        email: '',
+        instagram: '',
+        facebook: '',
+        es_vip: true,
+        puntos: 100,
+        fecha_inicio_vip: new Date().toISOString().split('T')[0],
+        fecha_vencimiento_vip: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      });
+      fetchData();
+    } catch (err) {
+      alert(`Error al guardar socio: ${err.message}`);
+    }
+  };
+
+  const handleRenewMembership = async (socio) => {
+    const cuotaMonto = 990;
+    const confirmMsg = `¿Deseas cobrar la cuota mensual ($${cuotaMonto} UYU) a ${socio.nombre} y extender su membresía VIP por 30 días?`;
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      const hoy = new Date();
+      const nuevaFechaVencimiento = new Date(hoy.setDate(hoy.getDate() + 30)).toISOString().split('T')[0];
+
+      const { error: socErr } = await supabase
+        .from('socios')
+        .update({
+          es_vip: true,
+          estado_solicitud: 'aprobado',
+          activo: true,
+          fecha_vencimiento_vip: nuevaFechaVencimiento
+        })
+        .eq('id', socio.id);
+
+      if (socErr) throw socErr;
+
+      await supabase.from('cortes_manuales').insert([{
+        cliente_nombre: socio.nombre,
+        servicio_nombre: 'Cuota Membresía VIP (+30 días)',
+        monto: cuotaMonto,
+        propina: 0,
+        total: cuotaMonto,
+        metodo: 'Efectivo / Mensualidad',
+        fecha: new Date().toISOString().split('T')[0],
+        hora: new Date().toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', hour12: false })
+      }]);
+
+      alert(`¡Membresía de ${socio.nombre} renovada hasta ${nuevaFechaVencimiento}! El cobro fue sumado a la caja.`);
+      fetchData();
+    } catch (err) {
+      alert(`Error al renovar membresía: ${err.message}`);
+    }
+  };
+
+  const toggleSocioVip = async (socio) => {
+    try {
+      const nuevoVip = !socio.es_vip;
+      const nuevaFecha = nuevoVip ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : null;
+
+      const { error } = await supabase
+        .from('socios')
+        .update({ 
+          es_vip: nuevoVip,
+          estado_solicitud: 'aprobado',
+          activo: true,
+          fecha_vencimiento_vip: nuevaFecha
+        })
+        .eq('id', socio.id);
+
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    }
+  };
+
+  const handleDeleteSocio = async (id) => {
+    if (!confirm('¿Deseas eliminar este socio del club?')) return;
+    try {
+      const { error } = await supabase.from('socios').delete().eq('id', id);
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      alert(`Error al eliminar socio: ${err.message}`);
+    }
+  };
+
+  // Guardar servicio
+  const handleSaveService = async (e, customData = null) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const dataToSave = customData || serviceForm;
+    const servicePayload = {
+      nombre: dataToSave.nombre,
+      precio: parseFloat(dataToSave.precio),
+      duracion_minutos: parseInt(dataToSave.duracion_minutos),
+      descripcion: dataToSave.descripcion || null,
+      badge: dataToSave.badge || null,
+      image_url: dataToSave.image_url || null,
+      features: Array.isArray(dataToSave.features) ? dataToSave.features : []
+    };
+
+    try {
+      if (editingService) {
+        const { error } = await supabase
+          .from('servicios')
+          .update(servicePayload)
+          .eq('id', editingService.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('servicios')
+          .insert([{ ...servicePayload, activo: true }]);
+        if (error) throw error;
+      }
+
+      setShowServiceModal(false);
+      setEditingService(null);
+      setServiceForm({ nombre: '', precio: '', duracion_minutos: 30, descripcion: '', badge: '', image_url: '', features: [] });
+      fetchData();
+    } catch (err) {
+      alert(`Error al guardar servicio: ${err.message}`);
+    }
+  };
+
+  const toggleServiceActive = async (service) => {
+    try {
+      const { error } = await supabase
+        .from('servicios')
+        .update({ activo: !service.activo })
+        .eq('id', service.id);
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    }
+  };
+
+  const handleDeleteService = async (id) => {
+    if (!confirm('¿Deseas eliminar este servicio de la base de datos?')) return;
+    try {
+      const { error } = await supabase.from('servicios').delete().eq('id', id);
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      alert(`Error al eliminar: ${err.message}`);
+    }
+  };
+
+  // Barberos
   const handleSaveBarber = async (e) => {
     e.preventDefault();
     const horaIni = (barberForm.hora_inicio || '10:00') + ':00';
@@ -229,7 +544,9 @@ export default function AdminPage() {
           .update({
             nombre: barberForm.nombre,
             telefono: barberForm.telefono,
-            email: barberForm.email
+            email: barberForm.email,
+            avatar_url: barberForm.avatar_url || null,
+            descripcion: barberForm.descripcion || null
           })
           .eq('id', editingBarber.id);
         if (brbErr) throw brbErr;
@@ -245,6 +562,8 @@ export default function AdminPage() {
             nombre: barberForm.nombre,
             telefono: barberForm.telefono,
             email: barberForm.email,
+            avatar_url: barberForm.avatar_url || null,
+            descripcion: barberForm.descripcion || null,
             activo: true
           }])
           .select()
@@ -266,7 +585,7 @@ export default function AdminPage() {
 
       setShowBarberModal(false);
       setEditingBarber(null);
-      setBarberForm({ nombre: '', telefono: '', email: '', hora_inicio: '10:00', hora_fin: '20:00' });
+      setBarberForm({ nombre: '', telefono: '', email: '', avatar_url: '', descripcion: '', hora_inicio: '10:00', hora_fin: '20:00' });
       fetchData();
     } catch (err) {
       alert(`Error al guardar barbero: ${err.message}`);
@@ -298,87 +617,51 @@ export default function AdminPage() {
     }
   };
 
-  // Actualizar asistencia diaria de barbero
-  const handleUpdateAsistencia = async (barberoId, nuevoEstado) => {
-    const hoyStr = new Date().toISOString().split('T')[0];
-    setAsistencias(prev => ({ ...prev, [barberoId]: nuevoEstado }));
-
+  // Guardar Asistencia
+  const handleSaveAsistencia = async (asistenciaData) => {
     try {
-      await supabase.from('asistencias_barberos').upsert({
-        barbero_id: barberoId,
-        fecha: hoyStr,
-        estado: nuevoEstado
-      });
+      const payload = {
+        barbero_id: asistenciaData.barbero_id,
+        fecha: asistenciaData.fecha,
+        estado: asistenciaData.estado,
+        hora_llegada: asistenciaData.hora_llegada ? `${asistenciaData.hora_llegada}:00` : null,
+        hora_salida: asistenciaData.hora_salida ? `${asistenciaData.hora_salida}:00` : null,
+        motivo: asistenciaData.motivo
+      };
 
-      if (nuevoEstado === 'ausente' || nuevoEstado === 'franco') {
-        await supabase.from('bloqueos_agenda').insert([{
-          barbero_id: barberoId,
-          fecha_inicio: `${hoyStr}T00:00:00`,
-          fecha_fin: `${hoyStr}T23:59:59`,
-          motivo: `Inasistencia / ${nuevoEstado}`
-        }]);
-      }
-    } catch (err) {
-      console.error('Error al actualizar asistencia:', err);
-    }
-  };
+      const { data, error } = await supabase
+        .from('asistencias_barberos')
+        .insert([payload])
+        .select()
+        .single();
 
-  // Servicios
-  const handleSaveService = async (e) => {
-    e.preventDefault();
-    try {
-      if (editingService) {
-        const { error } = await supabase
-          .from('servicios')
-          .update({
-            nombre: serviceForm.nombre,
-            descripcion: serviceForm.descripcion,
-            duracion_minutos: parseInt(serviceForm.duracion_minutos),
-            precio: parseFloat(serviceForm.precio)
-          })
-          .eq('id', editingService.id);
-        if (error) throw error;
+      if (error) {
+        console.error('Error supabase asistencia:', error);
+        setAsistenciasList(prev => [{ id: Date.now(), ...asistenciaData }, ...prev]);
       } else {
-        const { error } = await supabase
-          .from('servicios')
-          .insert([{
-            nombre: serviceForm.nombre,
-            descripcion: serviceForm.descripcion,
-            duracion_minutos: parseInt(serviceForm.duracion_minutos),
-            precio: parseFloat(serviceForm.precio),
-            activo: true
-          }]);
-        if (error) throw error;
+        setAsistenciasList(prev => [data, ...prev]);
       }
 
-      setShowServiceModal(false);
-      setEditingService(null);
-      setServiceForm({ nombre: '', descripcion: '', duracion_minutos: 30, precio: '' });
-      fetchData();
+      if (asistenciaData.estado === 'ausente') {
+        try {
+          await supabase.from('bloqueos_agenda').insert([{
+            barbero_id: asistenciaData.barbero_id,
+            fecha_inicio: `${asistenciaData.fecha}T00:00:00`,
+            fecha_fin: `${asistenciaData.fecha}T23:59:59`,
+            motivo: `Inasistencia: ${asistenciaData.motivo || 'Falta'}`
+          }]);
+        } catch (_) {}
+      }
     } catch (err) {
-      alert(`Error al guardar servicio: ${err.message}`);
+      console.error('Error al guardar asistencia:', err);
     }
   };
 
-  const toggleServiceActive = async (service) => {
+  const handleDeleteAsistencia = async (id) => {
+    if (!confirm('¿Deseas eliminar este registro de asistencia?')) return;
     try {
-      const { error } = await supabase
-        .from('servicios')
-        .update({ activo: !service.activo })
-        .eq('id', service.id);
-      if (error) throw error;
-      fetchData();
-    } catch (err) {
-      alert(`Error: ${err.message}`);
-    }
-  };
-
-  const handleDeleteService = async (id) => {
-    if (!confirm('¿Deseas eliminar este servicio de la base de datos?')) return;
-    try {
-      const { error } = await supabase.from('servicios').delete().eq('id', id);
-      if (error) throw error;
-      fetchData();
+      await supabase.from('asistencias_barberos').delete().eq('id', id);
+      setAsistenciasList(prev => prev.filter(a => a.id !== id));
     } catch (err) {
       alert(`Error al eliminar: ${err.message}`);
     }
@@ -489,15 +772,17 @@ export default function AdminPage() {
     } catch (_) {}
   };
 
+  const hoyStr = new Date().toISOString().split('T')[0];
   const badges = {
     citas: citas.filter(c => c.estado === 'pendiente').length,
+    sociosPendientes: socios.filter(s => s.es_vip && s.estado_solicitud === 'pendiente').length,
+    sociosVencidos: socios.filter(s => s.es_vip && s.fecha_vencimiento_vip && s.fecha_vencimiento_vip < hoyStr).length,
     stock: inventario.filter(i => i.stock <= i.min_stock).length,
     promociones: promociones.filter(p => p.activo).length
   };
 
-  const hoyStr = new Date().toISOString().split('T')[0];
   const totalFacturadoHoy = [
-    ...citas.filter(c => c.estado === 'completada' && c.fecha_hora_inicio && c.fecha_hora_inicio.startsWith(hoyStr)).map(c => Number(c.servicios?.precio || 0)),
+    ...citas.filter(c => c.estado === 'completada' && c.fecha_hora_inicio && c.fecha_hora_inicio.startsWith(hoyStr)).map(c => Number(c.servicios?.precio || 0) + Number(c.propina || 0)),
     ...manualCortes.filter(m => m.fecha === hoyStr).map(m => Number(m.total || 0))
   ].reduce((a, b) => a + b, 0);
 
@@ -564,6 +849,7 @@ export default function AdminPage() {
                   barberos={barberos}
                   onRefresh={fetchCitas}
                   onUpdateStatus={updateCitaStatus}
+                  onCompletarCitaWithCobro={handleCompletarCitaWithCobro}
                 />
               )}
 
@@ -573,6 +859,51 @@ export default function AdminPage() {
                   manualCortes={manualCortes}
                   barberos={barberos}
                   onOpenManualModal={() => setShowManualCorteModal(true)}
+                  onRequestDeleteCobro={(item) => {
+                    setItemToDelete(item);
+                    setShowDeleteVentaModal(true);
+                  }}
+                />
+              )}
+
+              {activeTab === 'socios' && (
+                <SociosTab 
+                  socios={socios}
+                  onNewSocio={() => {
+                    setEditingSocio(null);
+                    setSocioForm({
+                      nombre: '',
+                      telefono: '',
+                      email: '',
+                      instagram: '',
+                      facebook: '',
+                      es_vip: true,
+                      puntos: 100,
+                      fecha_inicio_vip: new Date().toISOString().split('T')[0],
+                      fecha_vencimiento_vip: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+                    });
+                    setShowSocioModal(true);
+                  }}
+                  onEditSocio={(socio) => {
+                    setEditingSocio(socio);
+                    setSocioForm({
+                      nombre: socio.nombre,
+                      telefono: socio.telefono,
+                      email: socio.email || '',
+                      instagram: socio.instagram || '',
+                      facebook: socio.facebook || '',
+                      es_vip: socio.es_vip,
+                      puntos: socio.puntos || 0,
+                      fecha_inicio_vip: socio.fecha_inicio_vip || new Date().toISOString().split('T')[0],
+                      fecha_vencimiento_vip: socio.fecha_vencimiento_vip || ''
+                    });
+                    setShowSocioModal(true);
+                  }}
+                  onToggleVip={toggleSocioVip}
+                  onApproveSocio={handleApproveSocio}
+                  onRejectSocio={handleRejectSocio}
+                  onRenewMembership={handleRenewMembership}
+                  onDeleteSocio={handleDeleteSocio}
                 />
               )}
 
@@ -630,16 +961,27 @@ export default function AdminPage() {
                   servicios={servicios}
                   onNewService={() => {
                     setEditingService(null);
-                    setServiceForm({ nombre: '', descripcion: '', duracion_minutos: 30, precio: '' });
+                    setServiceForm({ 
+                      nombre: '', 
+                      precio: '', 
+                      duracion_minutos: 30, 
+                      descripcion: '', 
+                      badge: '', 
+                      image_url: '', 
+                      features: [] 
+                    });
                     setShowServiceModal(true);
                   }}
                   onEditService={(srv) => {
                     setEditingService(srv);
                     setServiceForm({
                       nombre: srv.nombre,
-                      descripcion: srv.descripcion || '',
+                      precio: srv.precio,
                       duracion_minutos: srv.duracion_minutos,
-                      precio: srv.precio
+                      descripcion: srv.descripcion || '',
+                      badge: srv.badge || '',
+                      image_url: srv.image_url || '',
+                      features: srv.features || []
                     });
                     setShowServiceModal(true);
                   }}
@@ -651,10 +993,18 @@ export default function AdminPage() {
               {activeTab === 'barberos' && (
                 <BarberosTab 
                   barberos={barberos}
-                  asistencias={asistencias}
+                  asistenciasList={asistenciasList}
                   onNewBarber={() => {
                     setEditingBarber(null);
-                    setBarberForm({ nombre: '', telefono: '', email: '', hora_inicio: '10:00', hora_fin: '20:00' });
+                    setBarberForm({ 
+                      nombre: '', 
+                      telefono: '', 
+                      email: '', 
+                      avatar_url: '', 
+                      descripcion: '', 
+                      hora_inicio: '10:00', 
+                      hora_fin: '20:00' 
+                    });
                     setShowBarberModal(true);
                   }}
                   onEditBarber={(b) => {
@@ -663,6 +1013,8 @@ export default function AdminPage() {
                       nombre: b.nombre,
                       telefono: b.telefono || '',
                       email: b.email || '',
+                      avatar_url: b.avatar_url || '',
+                      descripcion: b.descripcion || '',
                       hora_inicio: b.hora_inicio ? b.hora_inicio.slice(0, 5) : '10:00',
                       hora_fin: b.hora_fin ? b.hora_fin.slice(0, 5) : '20:00'
                     });
@@ -670,7 +1022,8 @@ export default function AdminPage() {
                   }}
                   onToggleActive={toggleBarberActive}
                   onDeleteBarber={handleDeleteBarber}
-                  onUpdateAsistencia={handleUpdateAsistencia}
+                  onOpenAsistenciaModal={() => setShowAsistenciaModal(true)}
+                  onDeleteAsistencia={handleDeleteAsistencia}
                 />
               )}
             </>
@@ -697,6 +1050,15 @@ export default function AdminPage() {
         setBarberForm={setBarberForm}
       />
 
+      <SocioModal 
+        isOpen={showSocioModal}
+        onClose={() => setShowSocioModal(false)}
+        onSave={handleSaveSocio}
+        editingSocio={editingSocio}
+        socioForm={socioForm}
+        setSocioForm={setSocioForm}
+      />
+
       <StockModal 
         isOpen={showStockModal}
         onClose={() => setShowStockModal(false)}
@@ -721,6 +1083,24 @@ export default function AdminPage() {
         onSave={handleSaveManualCorte}
         barberos={barberos}
         servicios={servicios}
+      />
+
+      <AsistenciaModal 
+        isOpen={showAsistenciaModal}
+        onClose={() => setShowAsistenciaModal(false)}
+        onSave={handleSaveAsistencia}
+        barberos={barberos}
+      />
+
+      <ConfirmDeleteVentaModal 
+        isOpen={showDeleteVentaModal}
+        onClose={() => {
+          setShowDeleteVentaModal(false);
+          setItemToDelete(null);
+        }}
+        onConfirm={handleConfirmDeleteVenta}
+        itemToDelete={itemToDelete}
+        adminEmail={session?.user?.email}
       />
 
     </div>

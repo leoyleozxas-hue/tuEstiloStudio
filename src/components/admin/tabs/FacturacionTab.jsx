@@ -1,136 +1,161 @@
 // src/components/admin/tabs/FacturacionTab.jsx
 import React, { useState } from 'react';
-import { ReceiptText, Download, Plus, HeartHandshake } from 'lucide-react';
+import { DollarSign, Download, Plus, Trash2 } from 'lucide-react';
 import { exportToCSV } from '../../../utils/exportUtils';
 
-export function FacturacionTab({
-  citas = [],
-  manualCortes = [],
-  barberos = [],
-  onOpenManualModal
+export function FacturacionTab({ 
+  citas = [], 
+  manualCortes = [], 
+  barberos = [], 
+  onOpenManualModal,
+  onRequestDeleteCobro
 }) {
-  const [periodo, setPeriodo] = useState('dia'); // 'dia' | 'semana' | 'mes' | 'todo'
+  const [periodo, setPeriodo] = useState('dia'); // 'dia' | 'semana' | 'mes' | 'todos'
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
-  const [filterBarber, setFilterBarber] = useState('all');
+  const [filterBarbero, setFilterBarbero] = useState('all');
+  const [filterMetodo, setFilterMetodo] = useState('all');
 
-  // Unificar citas completadas con cobros manuales
-  const todosLosCobros = [
+  // 1. Unificar Citas Completadas + Cortes Manuales
+  const allVentas = [
+    // Citas Web Completadas
     ...citas
       .filter(c => c.estado === 'completada')
-      .map(c => ({
-        id: `cita-${c.id}`,
-        fecha: c.fecha_hora_inicio ? c.fecha_hora_inicio.split('T')[0] : '',
-        hora: c.fecha_hora_inicio ? new Date(c.fecha_hora_inicio).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit' }) : '',
-        fecha_full: new Date(c.fecha_hora_inicio || Date.now()),
-        cliente_nombre: c.cliente_nombre || 'Cliente',
-        barbero_nombre: c.barberos?.nombre || 'General',
-        barbero_id: String(c.barbero_id || ''),
-        servicio_nombre: c.servicios?.nombre || 'Servicio',
-        monto: Number(c.servicios?.precio || 0),
-        propina: Number(c.propina || 0),
-        total: Number(c.servicios?.precio || 0) + Number(c.propina || 0),
-        metodo: c.metodo_pago || 'Efectivo',
-        tipo: 'Cita Web'
-      })),
+      .map(c => {
+        const start = new Date(c.fecha_hora_inicio);
+        const fecha = start.toISOString().split('T')[0];
+        const hora = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+        const monto = Number(c.servicios?.precio || 0);
+
+        return {
+          id: c.id,
+          tipo: 'Cita Web',
+          fecha,
+          hora,
+          cliente_nombre: c.cliente_nombre,
+          barbero_id: c.barbero_id,
+          barbero_nombre: c.barberos?.nombre || 'Barbero',
+          servicio_nombre: c.servicios?.nombre || 'Corte',
+          monto: monto,
+          propina: Number(c.propina || 0),
+          total: monto + Number(c.propina || 0),
+          metodo: c.metodo_pago || 'Efectivo',
+          isCita: true
+        };
+      }),
+    
+    // Cortes Manuales / Mostrador / Cuotas Socios
     ...manualCortes.map(m => ({
-      id: `manual-${m.id}`,
+      id: m.id,
+      tipo: m.servicio_nombre?.includes('Membresía') ? 'Cuota Socio' : 'Mostrador',
       fecha: m.fecha,
       hora: m.hora,
-      fecha_full: new Date(`${m.fecha}T${m.hora || '12:00'}`),
-      cliente_nombre: m.cliente_nombre || 'Cliente mostrador',
-      barbero_nombre: m.barbero_nombre || 'General',
-      barbero_id: String(m.barbero_id || ''),
+      cliente_nombre: m.cliente_nombre || 'Cliente Ocasional',
+      barbero_id: m.barbero_id,
+      barbero_nombre: m.barbero_nombre || 'Barbero',
       servicio_nombre: m.servicio_nombre || 'Servicio',
       monto: Number(m.monto || 0),
       propina: Number(m.propina || 0),
-      total: Number(m.monto || 0) + Number(m.propina || 0),
+      total: Number(m.total || m.monto || 0),
       metodo: m.metodo || 'Efectivo',
-      tipo: 'Mostrador'
+      isCita: false
     }))
-  ].sort((a, b) => b.fecha_full - a.fecha_full);
+  ].sort((a, b) => new Date(`${b.fecha}T${b.hora}`) - new Date(`${a.fecha}T${a.hora}`));
 
-  // Filtrado según el período seleccionado
-  const cobrosFiltrados = todosLosCobros.filter(item => {
-    if (filterBarber !== 'all' && item.barbero_id !== String(filterBarber)) {
+  // 2. Filtrado por período, barbero y método de pago
+  const now = new Date();
+  const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay() + 1)).toISOString().split('T')[0];
+
+  const ventasFiltradas = allVentas.filter(v => {
+    if (filterBarbero !== 'all' && String(v.barbero_id) !== String(filterBarbero)) {
       return false;
     }
-
+    if (filterMetodo !== 'all' && v.metodo !== filterMetodo) {
+      return false;
+    }
     if (periodo === 'dia') {
-      return item.fecha === selectedDate;
+      return v.fecha === selectedDate;
     }
-
-    if (periodo === 'mes') {
-      return item.fecha.startsWith(selectedMonth);
-    }
-
     if (periodo === 'semana') {
-      const d = new Date(item.fecha);
-      const hoy = new Date();
-      const diffTime = Math.abs(hoy - d);
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      return diffDays <= 7;
+      return v.fecha >= startOfWeek;
     }
-
-    return true; // 'todo'
+    if (periodo === 'mes') {
+      return v.fecha.startsWith(selectedMonth);
+    }
+    return true;
   });
 
-  // Totales
-  const totalMontoServicios = cobrosFiltrados.reduce((acc, curr) => acc + curr.monto, 0);
-  const totalPropinas = cobrosFiltrados.reduce((acc, curr) => acc + curr.propina, 0);
-  const totalGeneralCaja = totalMontoServicios + totalPropinas;
-  const ticketPromedio = cobrosFiltrados.length > 0 ? Math.round(totalMontoServicios / cobrosFiltrados.length) : 0;
+  // 3. Totales
+  const totalFacturado = ventasFiltradas.reduce((acc, v) => acc + v.total, 0);
+  const totalPropinas = ventasFiltradas.reduce((acc, v) => acc + v.propina, 0);
+  const totalCortesCount = ventasFiltradas.length;
+  const promedioPorCorte = totalCortesCount > 0 ? (totalFacturado / totalCortesCount).toFixed(0) : 0;
 
-  // Descarga CSV personalizada
+  // 4. Descargar Reporte CSV con columna de Método de Pago
   const handleExportCSV = () => {
     const headers = [
-      'ID', 'Fecha', 'Hora', 'Cliente', 'Barbero', 'Servicio', 
-      'Tipo_Registro', 'Metodo_Pago', 'Monto_Servicio_UYU', 'Propina_UYU', 'Total_Cobrado_UYU'
+      'ID', 'Tipo_Origen', 'Fecha', 'Hora', 'Cliente', 'Barbero', 'Servicio', 
+      'Metodo_Pago', 'Monto_Base_UYU', 'Propina_UYU', 'Total_UYU'
     ];
 
-    const rows = cobrosFiltrados.map(c => [
-      c.id,
-      c.fecha,
-      c.hora,
-      c.cliente_nombre,
-      c.barbero_nombre,
-      c.servicio_nombre,
-      c.tipo,
-      c.metodo,
-      c.monto,
-      c.propina,
-      c.total
+    const rows = ventasFiltradas.map(v => [
+      v.id,
+      v.tipo,
+      v.fecha,
+      v.hora,
+      v.cliente_nombre,
+      v.barbero_nombre,
+      v.servicio_nombre,
+      v.metodo,
+      v.monto,
+      v.propina,
+      v.total
     ]);
 
     const etiquetaPeriodo = periodo === 'dia' ? selectedDate : periodo === 'mes' ? selectedMonth : periodo;
     exportToCSV(`Facturacion_Barberia_${etiquetaPeriodo}`, headers, rows);
   };
 
+  const getMetodoBadge = (metodo) => {
+    const met = (metodo || 'Efectivo').toLowerCase();
+    if (met.includes('transferencia')) {
+      return { label: 'Transferencia', class: 'bg-blue-500/15 text-blue-400 border-blue-500/30' };
+    }
+    if (met.includes('mercado') || met.includes('mp') || met.includes('qr')) {
+      return { label: 'Mercado Pago', class: 'bg-sky-500/15 text-sky-400 border-sky-500/30' };
+    }
+    if (met.includes('tarjeta') || met.includes('debito') || met.includes('credito') || met.includes('pos')) {
+      return { label: 'Tarjeta / Débito', class: 'bg-purple-500/15 text-purple-400 border-purple-500/30' };
+    }
+    return { label: 'Efectivo', class: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' };
+  };
+
   return (
-    <div className="space-y-5 animate-fadeIn">
+    <div className="space-y-6 animate-fadeIn">
       
-      {/* Encabezado y Acciones */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#131313] border border-[#242424] p-4 rounded-2xl">
+      {/* Cabecera y Acciones */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#131313] border border-[#242424] p-4 rounded-2xl">
         <div>
           <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <ReceiptText className="text-[#d4af37]" size={18} /> Cortes, Caja & Facturación
+            <DollarSign className="text-[#d4af37]" size={18} />
+            <span>Facturación & Registro de Ventas</span>
           </h2>
-          <p className="text-xs text-gray-400">Control de servicios realizados, registro de propinas y balance financiero.</p>
+          <p className="text-xs text-gray-400">Control detallado de ingresos, medios de pago (Efectivo, Transferencia, POS, MP) y propinas.</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           <button
             onClick={onOpenManualModal}
-            className="flex items-center gap-1.5 bg-[#d4af37] text-black font-bold px-3.5 py-2.5 rounded-xl text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all"
+            className="flex items-center gap-1.5 bg-[#d4af37] text-black font-bold px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all"
           >
             <Plus size={14} />
-            <span>Registrar Cobro / Corte</span>
+            <span>Cobro Mostrador / Propina</span>
           </button>
 
           <button
             onClick={handleExportCSV}
-            className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all shadow-lg active:scale-95"
-            title="Descargar reporte en Excel"
+            className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider transition-all shadow-lg active:scale-95"
+            title="Descargar detalle en Excel"
           >
             <Download size={14} />
             <span>Descargar CSV</span>
@@ -138,9 +163,10 @@ export function FacturacionTab({
         </div>
       </div>
 
-      {/* Barra de Filtros: Día, Semana, Mes, Barbero */}
-      <div className="bg-[#131313] border border-[#242424] p-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1 bg-[#181818] p-1 rounded-xl border border-[#282828] text-xs font-bold">
+      {/* Barra de Filtros por Período y Método de Pago */}
+      <div className="bg-[#131313] border border-[#242424] p-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs">
+        
+        <div className="flex items-center gap-1 bg-[#181818] p-1 rounded-xl border border-[#282828] font-bold">
           <button
             onClick={() => setPeriodo('dia')}
             className={`px-3 py-1.5 rounded-lg transition-all ${periodo === 'dia' ? 'bg-[#d4af37] text-black shadow' : 'text-gray-400 hover:text-white'}`}
@@ -160,89 +186,100 @@ export function FacturacionTab({
             Por Mes
           </button>
           <button
-            onClick={() => setPeriodo('todo')}
-            className={`px-3 py-1.5 rounded-lg transition-all ${periodo === 'todo' ? 'bg-[#d4af37] text-black shadow' : 'text-gray-400 hover:text-white'}`}
+            onClick={() => setPeriodo('todos')}
+            className={`px-3 py-1.5 rounded-lg transition-all ${periodo === 'todos' ? 'bg-[#d4af37] text-black shadow' : 'text-gray-400 hover:text-white'}`}
           >
-            Histórico Todo
+            Histórico
           </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
           {periodo === 'dia' && (
-            <input
+            <input 
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-[#181818] border border-[#303030] text-white text-xs px-3 py-1.5 rounded-xl focus:border-[#d4af37] focus:outline-none"
+              className="bg-[#181818] border border-[#303030] text-white px-3 py-1.5 rounded-xl focus:border-[#d4af37] focus:outline-none font-mono"
             />
           )}
 
           {periodo === 'mes' && (
-            <input
+            <input 
               type="month"
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(e.target.value)}
-              className="bg-[#181818] border border-[#303030] text-white text-xs px-3 py-1.5 rounded-xl focus:border-[#d4af37] focus:outline-none"
+              className="bg-[#181818] border border-[#303030] text-white px-3 py-1.5 rounded-xl focus:border-[#d4af37] focus:outline-none font-mono"
             />
           )}
 
           <select
-            value={filterBarber}
-            onChange={(e) => setFilterBarber(e.target.value)}
-            className="bg-[#181818] border border-[#303030] text-white text-xs px-3 py-1.5 rounded-xl focus:border-[#d4af37] focus:outline-none"
+            value={filterBarbero}
+            onChange={(e) => setFilterBarbero(e.target.value)}
+            className="bg-[#181818] border border-[#303030] text-white px-3 py-1.5 rounded-xl focus:border-[#d4af37] focus:outline-none font-semibold"
           >
             <option value="all">Todos los barberos</option>
             {barberos.map(b => (
               <option key={b.id} value={b.id}>{b.nombre}</option>
             ))}
           </select>
+
+          {/* FILTRO POR MEDIO DE PAGO */}
+          <select
+            value={filterMetodo}
+            onChange={(e) => setFilterMetodo(e.target.value)}
+            className="bg-[#181818] border border-[#303030] text-white px-3 py-1.5 rounded-xl focus:border-[#d4af37] focus:outline-none font-semibold"
+          >
+            <option value="all">Todos los medios de pago</option>
+            <option value="Efectivo">Efectivo</option>
+            <option value="Transferencia">Transferencia</option>
+            <option value="Mercado Pago">Mercado Pago</option>
+            <option value="Tarjeta / Débito">Tarjeta / Débito</option>
+          </select>
+        </div>
+
+      </div>
+
+      {/* Tarjetas KPI */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+        <div className="bg-[#131313] border border-[#242424] p-4 rounded-2xl space-y-1">
+          <span className="text-[10px] uppercase font-bold text-gray-400">Total Ingresos</span>
+          <p className="text-xl sm:text-2xl font-serif font-bold text-[#d4af37]">${totalFacturado.toLocaleString()} UYU</p>
+          <p className="text-[10px] text-gray-500">Facturación acumulada</p>
+        </div>
+
+        <div className="bg-[#131313] border border-[#242424] p-4 rounded-2xl space-y-1">
+          <span className="text-[10px] uppercase font-bold text-gray-400">Cortes / Atenciones</span>
+          <p className="text-xl sm:text-2xl font-serif font-bold text-emerald-400">{totalCortesCount}</p>
+          <p className="text-[10px] text-gray-500">Servicios completados</p>
+        </div>
+
+        <div className="bg-[#131313] border border-[#242424] p-4 rounded-2xl space-y-1">
+          <span className="text-[10px] uppercase font-bold text-purple-400">Propinas Registradas</span>
+          <p className="text-xl sm:text-2xl font-serif font-bold text-purple-400">${totalPropinas.toLocaleString()} UYU</p>
+          <p className="text-[10px] text-gray-500">Para el equipo de barberos</p>
+        </div>
+
+        <div className="bg-[#131313] border border-[#242424] p-4 rounded-2xl space-y-1">
+          <span className="text-[10px] uppercase font-bold text-blue-400">Ticket Promedio</span>
+          <p className="text-xl sm:text-2xl font-serif font-bold text-blue-400">${promedioPorCorte} UYU</p>
+          <p className="text-[10px] text-gray-500">Por cliente atendido</p>
         </div>
       </div>
 
-      {/* Tarjetas Cuadraditas de Resumen Financiero */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <div className="bg-[#131313] border border-[#242424] p-4 rounded-2xl space-y-1">
-          <span className="text-[10px] uppercase font-bold text-gray-400">Total Servicios</span>
-          <p className="text-2xl font-serif font-bold text-emerald-400">${totalMontoServicios.toLocaleString()} UYU</p>
-          <p className="text-[11px] text-gray-500">{cobrosFiltrados.length} servicios realizados</p>
-        </div>
-
-        <div className="bg-[#131313] border border-[#242424] p-4 rounded-2xl space-y-1">
-          <span className="text-[10px] uppercase font-bold text-[#d4af37] flex items-center gap-1">
-            <HeartHandshake size={12} />
-            <span>Total Propinas</span>
-          </span>
-          <p className="text-2xl font-serif font-bold text-[#d4af37]">${totalPropinas.toLocaleString()} UYU</p>
-          <p className="text-[11px] text-gray-500">Dejado por clientes en este período</p>
-        </div>
-
-        <div className="bg-[#131313] border border-[#242424] p-4 rounded-2xl space-y-1">
-          <span className="text-[10px] uppercase font-bold text-white">Ingreso Total Caja</span>
-          <p className="text-2xl font-serif font-bold text-white">${totalGeneralCaja.toLocaleString()} UYU</p>
-          <p className="text-[11px] text-gray-500">Servicios + Propinas combinados</p>
-        </div>
-
-        <div className="bg-[#131313] border border-[#242424] p-4 rounded-2xl space-y-1">
-          <span className="text-[10px] uppercase font-bold text-gray-400">Ticket Promedio</span>
-          <p className="text-2xl font-serif font-bold text-gray-200">${ticketPromedio.toLocaleString()} UYU</p>
-          <p className="text-[11px] text-gray-500">Promedio por servicio</p>
-        </div>
-      </div>
-
-      {/* Tabla de Detalle */}
+      {/* Tabla con Columna de Método de Pago */}
       <div className="bg-[#131313] border border-[#242424] rounded-2xl overflow-hidden shadow-xl">
         <div className="p-4 border-b border-[#242424] flex justify-between items-center">
           <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-            Detalle de Cobros ({periodo === 'dia' ? selectedDate : periodo === 'mes' ? selectedMonth : periodo})
+            Detalle de Ventas ({periodo === 'dia' ? selectedDate : periodo === 'mes' ? selectedMonth : periodo})
           </h3>
-          <span className="text-[11px] text-gray-500">{cobrosFiltrados.length} registros</span>
+          <span className="text-[11px] text-gray-500">{ventasFiltradas.length} registros</span>
         </div>
 
-        {cobrosFiltrados.length === 0 ? (
-          <div className="p-12 text-center text-gray-500 space-y-2">
-            <ReceiptText size={32} className="mx-auto text-gray-600 mb-2" />
-            <p className="text-sm font-bold text-gray-300">No hay registros de cobros para este período</p>
-            <p className="text-xs">Los turnos atendidos y los cobros manuales aparecerán aquí.</p>
+        {ventasFiltradas.length === 0 ? (
+          <div className="p-8 text-center text-gray-500 space-y-1">
+            <DollarSign size={28} className="mx-auto text-gray-600 mb-1" />
+            <p className="text-xs font-bold text-gray-300">No hay ventas registradas en este período</p>
+            <p className="text-[11px]">Cuando completes citas en la agenda o registres cobros manuales, aparecerán aquí.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -250,44 +287,67 @@ export function FacturacionTab({
               <thead className="bg-[#181818] uppercase text-[10px] text-gray-400 border-b border-[#262626]">
                 <tr>
                   <th className="py-3 px-4">Fecha / Hora</th>
+                  <th className="py-3 px-4">Origen</th>
                   <th className="py-3 px-4">Cliente</th>
                   <th className="py-3 px-4">Barbero</th>
                   <th className="py-3 px-4">Servicio</th>
-                  <th className="py-3 px-4">Origen</th>
-                  <th className="py-3 px-4">Método</th>
-                  <th className="py-3 px-4 text-right">Monto</th>
-                  <th className="py-3 px-4 text-right text-[#d4af37]">Propina</th>
-                  <th className="py-3 px-4 text-right">Total</th>
+                  <th className="py-3 px-4">Método de Pago</th>
+                  <th className="py-3 px-4">Monto</th>
+                  <th className="py-3 px-4">Propina</th>
+                  <th className="py-3 px-4">Total</th>
+                  <th className="py-3 px-4 text-right">Anular</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#222222]">
-                {cobrosFiltrados.map((item) => (
-                  <tr key={item.id} className="hover:bg-[#181818]/60 transition-colors">
-                    <td className="py-3.5 px-4 font-mono text-[11px] text-gray-400">
-                      {item.fecha} <strong className="text-[#d4af37] font-sans">{item.hora}</strong>
-                    </td>
-                    <td className="py-3.5 px-4 font-semibold text-white">{item.cliente_nombre}</td>
-                    <td className="py-3.5 px-4 text-gray-300">{item.barbero_nombre}</td>
-                    <td className="py-3.5 px-4">{item.servicio_nombre}</td>
-                    <td className="py-3.5 px-4">
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase ${
-                        item.tipo === 'Cita Web' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' : 'bg-purple-500/10 text-purple-400 border border-purple-500/30'
-                      }`}>
-                        {item.tipo}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className="px-2 py-0.5 rounded bg-[#1f1f1f] text-gray-300 text-[10px]">
-                        {item.metodo}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-semibold text-emerald-400">${item.monto}</td>
-                    <td className="py-3.5 px-4 text-right font-semibold text-[#d4af37]">
-                      {item.propina > 0 ? `+$${item.propina}` : '-'}
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-bold text-white">${item.total}</td>
-                  </tr>
-                ))}
+                {ventasFiltradas.map((v) => {
+                  const badgeMetodo = getMetodoBadge(v.metodo);
+
+                  return (
+                    <tr key={`${v.tipo}-${v.id}`} className="hover:bg-[#181818]/60 transition-colors">
+                      <td className="py-3 px-4 font-mono text-[11px] text-gray-400">
+                        {v.fecha} <span className="text-gray-500">({v.hora})</span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                          v.tipo === 'Cita Web'
+                            ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                            : v.tipo === 'Cuota Socio'
+                            ? 'bg-[#d4af37]/15 text-[#d4af37] border-[#d4af37]/30'
+                            : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                        }`}>
+                          {v.tipo}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 font-semibold text-white">{v.cliente_nombre}</td>
+                      <td className="py-3 px-4 text-[#d4af37] font-medium">{v.barbero_nombre}</td>
+                      <td className="py-3 px-4 text-gray-300">{v.servicio_nombre}</td>
+                      
+                      {/* COLUMNA MÉTODO DE PAGO */}
+                      <td className="py-3 px-4">
+                        <span className={`px-2.5 py-0.5 rounded-lg text-[10px] font-semibold border ${badgeMetodo.class}`}>
+                          {badgeMetodo.label}
+                        </span>
+                      </td>
+
+                      <td className="py-3 px-4 font-mono text-gray-300">${v.monto}</td>
+                      <td className="py-3 px-4 font-mono text-purple-400">
+                        {v.propina > 0 ? `+$${v.propina}` : '-'}
+                      </td>
+                      <td className="py-3 px-4 font-mono font-bold text-emerald-400 text-sm">
+                        ${v.total}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => onRequestDeleteCobro(v)}
+                          className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors border border-transparent hover:border-red-500/30"
+                          title="Anular Venta (Requiere contraseña de Admin)"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -1,9 +1,11 @@
 // src/components/sections/ServicesSection.jsx
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Clock, Check, ArrowRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Check, ArrowRight, Scissors } from 'lucide-react';
+import { supabase } from '../../lib/supabaseClient';
 import { servicesData } from '../../data/mockData';
 
 export default function ServicesSection({ onSelectService }) {
+  const [services, setServices] = useState(servicesData);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [cardsPerPage, setCardsPerPage] = useState(3);
   const [isPaused, setIsPaused] = useState(false);
@@ -11,6 +13,37 @@ export default function ServicesSection({ onSelectService }) {
   const touchStartX = useRef(0);
   const touchEndX = useRef(0);
 
+  // 1. Cargar servicios reales desde Supabase
+  useEffect(() => {
+    async function fetchServices() {
+      try {
+        const { data, error } = await supabase
+          .from('servicios')
+          .select('*')
+          .eq('activo', true)
+          .order('precio', { ascending: true });
+
+        if (!error && data && data.length > 0) {
+          const mapped = data.map((srv, idx) => ({
+            id: srv.id,
+            name: srv.nombre,
+            price: srv.precio,
+            duration: `${srv.duracion_minutos} min`,
+            desc: srv.descripcion || 'Servicio profesional de barbería y estilismo.',
+            badge: srv.badge || (idx === 0 ? 'Más Popular' : null),
+            image: srv.image_url || servicesData[idx % servicesData.length]?.image || 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&q=80&w=600',
+            features: srv.features && Array.isArray(srv.features) && srv.features.length > 0 
+              ? srv.features 
+              : ['Atención personalizada', 'Productos de primera línea']
+          }));
+          setServices(mapped);
+        }
+      } catch (_) {}
+    }
+    fetchServices();
+  }, []);
+
+  // 2. Responsive cards per view
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth < 640) {
@@ -27,7 +60,7 @@ export default function ServicesSection({ onSelectService }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const maxIndex = Math.max(0, servicesData.length - cardsPerPage);
+  const maxIndex = Math.max(0, services.length - cardsPerPage);
 
   const nextSlide = () => {
     setCurrentIndex((prev) => (prev >= maxIndex ? 0 : prev + 1));
@@ -37,14 +70,16 @@ export default function ServicesSection({ onSelectService }) {
     setCurrentIndex((prev) => (prev <= 0 ? maxIndex : prev - 1));
   };
 
+  // 3. Auto-play slider
   useEffect(() => {
-    if (isPaused) return;
+    if (isPaused || services.length <= cardsPerPage) return;
     const timer = setInterval(() => {
       nextSlide();
     }, 4500);
     return () => clearInterval(timer);
-  }, [currentIndex, isPaused, maxIndex]);
+  }, [currentIndex, isPaused, maxIndex, services.length, cardsPerPage]);
 
+  // 4. Touch swipe
   const handleTouchStart = (e) => {
     touchStartX.current = e.targetTouches[0].clientX;
   };
@@ -68,9 +103,11 @@ export default function ServicesSection({ onSelectService }) {
   return (
     <section id="servicios" className="py-8 sm:py-10 px-4 max-w-7xl mx-auto scroll-mt-20 overflow-hidden relative">
       
+      {/* Encabezado */}
       <div className="text-center max-w-xl mx-auto mb-6 sm:mb-8">
-        <span className="text-[10px] font-bold tracking-[0.3em] text-[#d4af37] uppercase block mb-1">
-          LO QUE HACEMOS
+        <span className="text-[10px] font-bold tracking-[0.3em] text-[#d4af37] uppercase flex items-center justify-center gap-1.5 mb-1">
+          <Scissors size={13} />
+          <span>LO QUE HACEMOS</span>
         </span>
         <h2 className="text-2xl sm:text-4xl font-serif font-bold text-white tracking-tight">
           Nuestros Servicios
@@ -81,21 +118,26 @@ export default function ServicesSection({ onSelectService }) {
       </div>
 
       <div className="relative">
-        <button
-          onClick={prevSlide}
-          className="hidden md:flex absolute -left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full border border-[#333333] bg-[#121212]/90 backdrop-blur-md hover:border-[#d4af37] text-white hover:text-[#d4af37] items-center justify-center transition-all shadow-xl active:scale-90"
-          aria-label="Anterior"
-        >
-          <ChevronLeft size={20} />
-        </button>
+        
+        {services.length > cardsPerPage && (
+          <>
+            <button
+              onClick={prevSlide}
+              className="hidden md:flex absolute -left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full border border-[#333333] bg-[#121212]/90 backdrop-blur-md hover:border-[#d4af37] text-white hover:text-[#d4af37] items-center justify-center transition-all shadow-xl active:scale-90"
+              aria-label="Anterior"
+            >
+              <ChevronLeft size={20} />
+            </button>
 
-        <button
-          onClick={nextSlide}
-          className="hidden md:flex absolute -right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full border border-[#333333] bg-[#121212]/90 backdrop-blur-md hover:border-[#d4af37] text-white hover:text-[#d4af37] items-center justify-center transition-all shadow-xl active:scale-90"
-          aria-label="Siguiente"
-        >
-          <ChevronRight size={20} />
-        </button>
+            <button
+              onClick={nextSlide}
+              className="hidden md:flex absolute -right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full border border-[#333333] bg-[#121212]/90 backdrop-blur-md hover:border-[#d4af37] text-white hover:text-[#d4af37] items-center justify-center transition-all shadow-xl active:scale-90"
+              aria-label="Siguiente"
+            >
+              <ChevronRight size={20} />
+            </button>
+          </>
+        )}
 
         <div 
           className="relative overflow-hidden"
@@ -111,7 +153,7 @@ export default function ServicesSection({ onSelectService }) {
               transform: `translateX(-${currentIndex * (100 / cardsPerPage)}%)`,
             }}
           >
-            {servicesData.map((service) => (
+            {services.map((service) => (
               <div
                 key={service.id}
                 className="w-full sm:w-1/2 lg:w-1/3 shrink-0 p-2 sm:p-2.5"
@@ -151,11 +193,11 @@ export default function ServicesSection({ onSelectService }) {
                         {service.desc}
                       </p>
 
-                      {service.features && (
+                      {service.features && service.features.length > 0 && (
                         <div className="space-y-1 mb-4 border-t border-[#1f1f1f] pt-2.5 flex flex-col items-center">
                           {service.features.slice(0, 2).map((feat, idx) => (
                             <div key={idx} className="flex items-center justify-center gap-1.5 text-[11px] text-gray-300">
-                              <Check size={11} className="text-[#d4af37] shrink-0" />
+                              <Check size={11} className="text-[#d4af37]" shrink-0 />
                               <span className="truncate">{feat}</span>
                             </div>
                           ))}
@@ -179,20 +221,22 @@ export default function ServicesSection({ onSelectService }) {
         </div>
       </div>
 
-      <div className="flex items-center justify-center gap-1.5 mt-5">
-        {Array.from({ length: maxIndex + 1 }).map((_, idx) => (
-          <button
-            key={idx}
-            onClick={() => setCurrentIndex(idx)}
-            aria-label={`Ir al grupo ${idx + 1}`}
-            className={`transition-all duration-300 rounded-full ${
-              currentIndex === idx
-                ? 'w-6 h-1.5 bg-[#d4af37]'
-                : 'w-1.5 h-1.5 bg-[#2a2a2a] hover:bg-[#444444]'
-            }`}
-          />
-        ))}
-      </div>
+      {services.length > cardsPerPage && (
+        <div className="flex items-center justify-center gap-1.5 mt-5">
+          {Array.from({ length: maxIndex + 1 }).map((_, idx) => (
+            <button
+              key={idx}
+              onClick={() => setCurrentIndex(idx)}
+              aria-label={`Ir al grupo ${idx + 1}`}
+              className={`transition-all duration-300 rounded-full ${
+                currentIndex === idx
+                  ? 'w-6 h-1.5 bg-[#d4af37]'
+                  : 'w-1.5 h-1.5 bg-[#2a2a2a] hover:bg-[#444444]'
+              }`}
+            />
+          ))}
+        </div>
+      )}
 
     </section>
   );

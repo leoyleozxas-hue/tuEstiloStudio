@@ -15,13 +15,11 @@ import FloatingCTA from '../components/layout/FloatingCTA';
 
 export default function HomePage() {
   const [selectedServiceId, setSelectedServiceId] = useState(null);
-  const [selectedBarberId, setSelectedBarberId] = useState(null);
   const [initialWidgetTab, setInitialWidgetTab] = useState('reserva');
   const [initialSocioMode, setInitialSocioMode] = useState('registro');
 
-  const scrollToBooking = (srvId = null, barberId = null) => {
+  const scrollToBooking = (srvId = null) => {
     if (srvId) setSelectedServiceId(srvId);
-    if (barberId) setSelectedBarberId(barberId);
     setInitialWidgetTab('reserva');
     document.getElementById('reserva')?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -51,11 +49,12 @@ export default function HomePage() {
         <ServicesSection onSelectService={(id) => scrollToBooking(id)} />
         <ExperienceSection />
         <BenefitsSection onBookClick={() => scrollToBooking()} />
-        <TeamSection onSelectBarber={(barberId) => scrollToBooking(null, barberId)} />
+        
+        {/* Galería limpia del equipo */}
+        <TeamSection />
         
         <BookingWidget 
           preselectedServiceId={selectedServiceId} 
-          preselectedBarberId={selectedBarberId}
           forcedTab={initialWidgetTab}
           forcedSocioMode={initialSocioMode}
         />
